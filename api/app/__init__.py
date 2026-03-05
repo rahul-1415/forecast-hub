@@ -1,0 +1,1 @@
+"""ForecastHub API package."""

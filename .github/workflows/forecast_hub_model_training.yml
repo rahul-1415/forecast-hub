@@ -1,0 +1,29 @@
+name: ForecastHub Daily Model Training
+
+on:
+  schedule:
+    - cron: "45 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  train-model:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger ForecastHub model training
+        env:
+          FORECASTHUB_API_BASE_URL: ${{ secrets.FORECASTHUB_API_BASE_URL }}
+          FORECASTHUB_SCHEDULER_JOB_TOKEN: ${{ secrets.FORECASTHUB_SCHEDULER_JOB_TOKEN }}
+        run: |
+          if [ -z "$FORECASTHUB_API_BASE_URL" ]; then
+            echo "Missing FORECASTHUB_API_BASE_URL secret"
+            exit 1
+          fi
+          if [ -z "$FORECASTHUB_SCHEDULER_JOB_TOKEN" ]; then
+            echo "Missing FORECASTHUB_SCHEDULER_JOB_TOKEN secret"
+            exit 1
+          fi
+
+          curl --fail --show-error --silent \
+            -X POST "$FORECASTHUB_API_BASE_URL/v1/jobs/train-model" \
+            -H "X-Job-Token: $FORECASTHUB_SCHEDULER_JOB_TOKEN" \
+            -H "Content-Type: application/json"
