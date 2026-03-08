@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import time
 
 import httpx
 from sqlalchemy.orm import Session
@@ -36,10 +37,23 @@ def fetch_hourly_forecast(location: Location) -> dict:
         "forecast_days": 7,
         "hourly": ",".join(HOURLY_FIELDS.keys()),
     }
-    with httpx.Client(timeout=settings.request_timeout_seconds) as client:
-        response = client.get(settings.open_meteo_base_url, params=params)
-        response.raise_for_status()
-        return response.json()
+    max_attempts = 3
+    last_error: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with httpx.Client(timeout=settings.request_timeout_seconds) as client:
+                response = client.get(settings.open_meteo_base_url, params=params)
+                response.raise_for_status()
+                return response.json()
+        except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
+            last_error = exc
+            if attempt == max_attempts:
+                break
+            # Brief linear backoff to absorb transient network/upstream issues.
+            time.sleep(attempt)
+
+    raise RuntimeError(f"Open-Meteo request failed after {max_attempts} attempts") from last_error
 
 
 def ingest_hourly_forecast(db: Session, location: Location) -> int:

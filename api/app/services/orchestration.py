@@ -24,38 +24,48 @@ def run_hourly_pipeline(db: Session) -> dict:
     total_ingested = 0
     total_plan_rows = 0
     total_anomalies = 0
+    failed_locations: list[str] = []
 
     try:
         for location in active_locations:
-            total_ingested += ingest_hourly_forecast(db, location)
+            try:
+                total_ingested += ingest_hourly_forecast(db, location)
 
-            today = datetime.utcnow().date()
-            tomorrow = today + timedelta(days=1)
+                today = datetime.utcnow().date()
+                tomorrow = today + timedelta(days=1)
 
-            total_plan_rows += len(generate_plan_windows(db, location.id, today))
-            total_plan_rows += len(generate_plan_windows(db, location.id, tomorrow))
+                total_plan_rows += len(generate_plan_windows(db, location.id, today))
+                total_plan_rows += len(generate_plan_windows(db, location.id, tomorrow))
 
-            get_or_generate_outfit(db, location.id, today)
-            get_or_generate_outfit(db, location.id, tomorrow)
+                get_or_generate_outfit(db, location.id, today)
+                get_or_generate_outfit(db, location.id, tomorrow)
 
-            get_or_generate_health_alert(db, location.id, today)
-            get_or_generate_health_alert(db, location.id, tomorrow)
+                get_or_generate_health_alert(db, location.id, today)
+                get_or_generate_health_alert(db, location.id, tomorrow)
 
-            anomalies = detect_anomalies(db, location.id)
-            total_anomalies += len(anomalies)
+                anomalies = detect_anomalies(db, location.id)
+                total_anomalies += len(anomalies)
+            except Exception as location_exc:
+                failed_locations.append(f"{location.name}: {location_exc}")
+                continue
 
-        run.status = "success"
+        status = "success" if not failed_locations else "partial_success"
+        message = "Pipeline completed successfully"
+        if failed_locations:
+            message = f"Pipeline completed with {len(failed_locations)} location failure(s): {'; '.join(failed_locations[:3])}"
+
+        run.status = status
         run.finished_at = datetime.utcnow()
-        run.message = "Pipeline completed"
+        run.message = message
         db.commit()
 
         return {
-            "status": "success",
+            "status": status,
             "processed_locations": len(active_locations),
             "ingested_rows": total_ingested,
             "generated_plan_rows": total_plan_rows,
             "generated_anomalies": total_anomalies,
-            "message": "Pipeline completed successfully",
+            "message": message,
         }
     except Exception as exc:
         run.status = "failed"
