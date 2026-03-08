@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     default_location_timezone: str = "America/Chicago"
 
     open_meteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
+    open_meteo_geocoding_url: str = "https://geocoding-api.open-meteo.com/v1/search"
     request_timeout_seconds: int = 20
 
     openai_api_key: str | None = None
@@ -33,11 +34,21 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        protected_namespaces=("settings_",),
     )
 
     @property
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.frontend_origin.split(",") if origin.strip()]
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        url = self.database_url.strip()
+        if url.startswith("postgres://"):
+            url = f"postgresql://{url.removeprefix('postgres://')}"
+        if url.startswith("postgresql://"):
+            return f"postgresql+psycopg://{url.removeprefix('postgresql://')}"
+        return url
 
 
 settings = Settings()

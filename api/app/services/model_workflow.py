@@ -286,6 +286,12 @@ def predict_next_hour_temperature(db: Session, location_id: int) -> float | None
     if frame[FEATURE_COLUMNS].isnull().any().any():
         return None
 
-    model = _load_model_cached(active.model_uri)
-    prediction = model.predict(frame[FEATURE_COLUMNS])[0]
-    return float(prediction)
+    try:
+        model = _load_model_cached(active.model_uri)
+        prediction = model.predict(frame[FEATURE_COLUMNS])[0]
+        return float(prediction)
+    except Exception:
+        # Active model metadata can drift from local MLflow artifacts across environments.
+        # Fail soft so overview endpoints keep working even when model artifacts are unavailable.
+        _load_model_cached.cache_clear()
+        return None

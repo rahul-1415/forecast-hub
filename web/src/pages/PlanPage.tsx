@@ -81,7 +81,7 @@ export function PlanPage({ location }: PlanPageProps) {
                   <XAxis dataKey="category" />
                   <YAxis domain={[0, 100]} />
                   <Tooltip />
-                  <Bar dataKey="score" fill="#2a8f6f" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="score" fill="#8f8f8f" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

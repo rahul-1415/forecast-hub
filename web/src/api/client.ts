@@ -1,3 +1,5 @@
+import type { LocationSuggestion } from "../types";
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string): Promise<T> {
@@ -10,6 +12,12 @@ async function request<T>(path: string): Promise<T> {
 
 export async function getOverview(location: string) {
   return request(`/v1/dashboard/overview?location=${encodeURIComponent(location)}`);
+}
+
+export async function getLocationSuggestions(query: string, limit = 6): Promise<LocationSuggestion[]> {
+  return request(
+    `/v1/dashboard/location-suggestions?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(String(limit))}`,
+  );
 }
 
 export async function getPlan(location: string, targetDate: string) {

@@ -11,6 +11,11 @@ class LocationRead(BaseModel):
     timezone: str
 
 
+class LocationSuggestion(BaseModel):
+    name: str
+    label: str
+
+
 class OverviewStats(BaseModel):
     min_temp_c: float | None
     max_temp_c: float | None
@@ -21,6 +26,7 @@ class OverviewStats(BaseModel):
 class OverviewResponse(BaseModel):
     location: LocationRead
     generated_at: datetime
+    current_temperature_c: float | None = None
     next_24h: OverviewStats
     top_recommendations: list[str]
     alert_level: str

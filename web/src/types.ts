@@ -6,9 +6,15 @@ export type LocationRead = {
   timezone: string;
 };
 
+export type LocationSuggestion = {
+  name: string;
+  label: string;
+};
+
 export type OverviewResponse = {
   location: LocationRead;
   generated_at: string;
+  current_temperature_c?: number | null;
   next_24h: {
     min_temp_c: number | null;
     max_temp_c: number | null;

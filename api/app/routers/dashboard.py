@@ -10,6 +10,7 @@ from ..schemas import (
     AnomaliesResponse,
     AnomalyItem,
     HealthResponse,
+    LocationSuggestion,
     LocationRead,
     OutfitResponse,
     OverviewResponse,
@@ -22,7 +23,7 @@ from ..services.features import get_hours_between
 from ..services.health import get_or_generate_health_alert
 from ..services.ingestion import ingest_hourly_forecast
 from ..services.llm import summarize_section
-from ..services.location import get_or_create_location
+from ..services.location import get_or_create_location, search_location_suggestions
 from ..services.model_workflow import predict_next_hour_temperature
 from ..services.orchestration import count_recent_anomalies
 from ..services.outfit import get_or_generate_outfit
@@ -63,6 +64,7 @@ def get_overview(
 
     now = datetime.utcnow()
     next_24_hours = get_hours_between(db, selected_location.id, now, now + timedelta(hours=24))
+    current_temperature = next((h.temperature_c for h in next_24_hours if h.temperature_c is not None), None)
 
     min_temp = min((h.temperature_c for h in next_24_hours if h.temperature_c is not None), default=None)
     max_temp = max((h.temperature_c for h in next_24_hours if h.temperature_c is not None), default=None)
@@ -114,6 +116,7 @@ def get_overview(
     return OverviewResponse(
         location=_location_read(selected_location),
         generated_at=datetime.utcnow(),
+        current_temperature_c=current_temperature,
         next_24h=OverviewStats(
             min_temp_c=min_temp,
             max_temp_c=max_temp,
@@ -125,6 +128,17 @@ def get_overview(
         anomalies_last_7d=anomalies_count,
         next_hour_temperature_prediction_c=next_hour_prediction,
     )
+
+
+@router.get("/location-suggestions", response_model=list[LocationSuggestion])
+def get_location_suggestions(
+    query: str = Query(min_length=2, max_length=120),
+    limit: int = Query(default=6, ge=1, le=12),
+) -> list[LocationSuggestion]:
+    return [
+        LocationSuggestion(name=item["name"], label=item["label"])
+        for item in search_location_suggestions(query, limit=limit)
+    ]
 
 
 @router.get("/plan", response_model=PlanResponse)
