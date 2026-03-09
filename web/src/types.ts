@@ -15,6 +15,8 @@ export type OverviewResponse = {
   location: LocationRead;
   generated_at: string;
   current_temperature_c?: number | null;
+  next_hour_temperature_open_meteo_c?: number | null;
+  next_hour_temperature_custom_model_c?: number | null;
   next_24h: {
     min_temp_c: number | null;
     max_temp_c: number | null;
@@ -25,6 +27,14 @@ export type OverviewResponse = {
   alert_level: string;
   anomalies_last_7d: number;
   next_hour_temperature_prediction_c?: number | null;
+  hourly_temperatures_24h?: {
+    timestamp: string;
+    temperature_c: number | null;
+  }[];
+  hourly_temperatures_24h_custom_model?: {
+    timestamp: string;
+    temperature_c: number | null;
+  }[];
 };
 
 export type PlanWindowItem = {

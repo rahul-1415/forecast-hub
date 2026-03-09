@@ -10,6 +10,7 @@ from ..schemas import (
     AnomaliesResponse,
     AnomalyItem,
     HealthResponse,
+    HourlyTemperaturePoint,
     LocationSuggestion,
     LocationRead,
     OutfitResponse,
@@ -25,6 +26,7 @@ from ..services.ingestion import ingest_hourly_forecast
 from ..services.llm import summarize_section
 from ..services.location import get_or_create_location, search_location_suggestions
 from ..services.model_workflow import predict_next_hour_temperature
+from ..services.model_workflow import predict_hourly_temperature_series
 from ..services.orchestration import count_recent_anomalies
 from ..services.outfit import get_or_generate_outfit
 from ..services.plan import get_plan_windows
@@ -64,7 +66,13 @@ def get_overview(
 
     now = datetime.utcnow()
     next_24_hours = get_hours_between(db, selected_location.id, now, now + timedelta(hours=24))
-    current_temperature = next((h.temperature_c for h in next_24_hours if h.temperature_c is not None), None)
+    hourly_temperatures = [h.temperature_c for h in next_24_hours if h.temperature_c is not None]
+    current_temperature = hourly_temperatures[0] if hourly_temperatures else None
+    open_meteo_next_hour_temperature = (
+        hourly_temperatures[1]
+        if len(hourly_temperatures) > 1
+        else current_temperature
+    )
 
     min_temp = min((h.temperature_c for h in next_24_hours if h.temperature_c is not None), default=None)
     max_temp = max((h.temperature_c for h in next_24_hours if h.temperature_c is not None), default=None)
@@ -113,10 +121,22 @@ def get_overview(
     )
     recommendations.append(llm_hint)
 
+    hourly_points = [
+        HourlyTemperaturePoint(timestamp=hour.timestamp, temperature_c=hour.temperature_c)
+        for hour in next_24_hours
+    ]
+    hourly_custom_predictions = predict_hourly_temperature_series(db, next_24_hours)
+    hourly_custom_points = [
+        HourlyTemperaturePoint(timestamp=hour.timestamp, temperature_c=prediction)
+        for hour, prediction in zip(next_24_hours, hourly_custom_predictions)
+    ]
+
     return OverviewResponse(
         location=_location_read(selected_location),
         generated_at=datetime.utcnow(),
         current_temperature_c=current_temperature,
+        next_hour_temperature_open_meteo_c=open_meteo_next_hour_temperature,
+        next_hour_temperature_custom_model_c=next_hour_prediction,
         next_24h=OverviewStats(
             min_temp_c=min_temp,
             max_temp_c=max_temp,
@@ -127,6 +147,8 @@ def get_overview(
         alert_level=alert_level,
         anomalies_last_7d=anomalies_count,
         next_hour_temperature_prediction_c=next_hour_prediction,
+        hourly_temperatures_24h=hourly_points,
+        hourly_temperatures_24h_custom_model=hourly_custom_points,
     )
 
 

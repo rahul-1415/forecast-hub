@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 
 import { getHealth } from "../api/client";
 import type { HealthResponse } from "../types";
+import { formatTextTimes, type TimeFormat } from "../utils/time";
 
 type HealthPageProps = {
   location: string;
+  timeFormat: TimeFormat;
 };
 
 type RiskBarProps = {
@@ -34,7 +36,7 @@ function RiskBar({ label, value, invert = false }: RiskBarProps) {
   );
 }
 
-export function HealthPage({ location }: HealthPageProps) {
+export function HealthPage({ location, timeFormat }: HealthPageProps) {
   const [targetDate, setTargetDate] = useState(todayIsoDate());
   const [data, setData] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -72,7 +74,6 @@ export function HealthPage({ location }: HealthPageProps) {
       <header className="page-header split">
         <div>
           <h2>Health Alerts Generator</h2>
-          <p>Risk-based weather health guidance for daily planning.</p>
         </div>
         <label className="date-picker" htmlFor="health-date">
           Date
@@ -103,7 +104,7 @@ export function HealthPage({ location }: HealthPageProps) {
 
           <section className="panel">
             <h3>AI Summary</h3>
-            <p className="long-summary">{data.summary}</p>
+            <p className="long-summary">{formatTextTimes(data.summary, timeFormat)}</p>
           </section>
         </>
       ) : null}

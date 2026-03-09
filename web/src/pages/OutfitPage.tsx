@@ -3,16 +3,18 @@ import { useEffect, useState } from "react";
 import { getOutfit } from "../api/client";
 import { MetricCard } from "../components/MetricCard";
 import type { OutfitResponse } from "../types";
+import { formatTextTimes, type TimeFormat } from "../utils/time";
 
 type OutfitPageProps = {
   location: string;
+  timeFormat: TimeFormat;
 };
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function OutfitPage({ location }: OutfitPageProps) {
+export function OutfitPage({ location, timeFormat }: OutfitPageProps) {
   const [targetDate, setTargetDate] = useState(todayIsoDate());
   const [data, setData] = useState<OutfitResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,7 +52,6 @@ export function OutfitPage({ location }: OutfitPageProps) {
       <header className="page-header split">
         <div>
           <h2>Outfit + Packing Assistant</h2>
-          <p>Practical clothing and carry recommendations from forecast trends.</p>
         </div>
         <label className="date-picker" htmlFor="outfit-date">
           Date
@@ -78,7 +79,7 @@ export function OutfitPage({ location }: OutfitPageProps) {
 
           <section className="panel">
             <h3>AI Summary</h3>
-            <p className="long-summary">{data.summary}</p>
+            <p className="long-summary">{formatTextTimes(data.summary, timeFormat)}</p>
           </section>
         </>
       ) : null}

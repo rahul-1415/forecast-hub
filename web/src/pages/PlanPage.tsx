@@ -1,18 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { useEffect, useState } from "react";
 
 import { getPlan } from "../api/client";
 import type { PlanResponse } from "../types";
+import { formatHourLabel, formatTextTimes, type TimeFormat } from "../utils/time";
 
 type PlanPageProps = {
   location: string;
+  timeFormat: TimeFormat;
 };
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function PlanPage({ location }: PlanPageProps) {
+export function PlanPage({ location, timeFormat }: PlanPageProps) {
   const [targetDate, setTargetDate] = useState(todayIsoDate());
   const [data, setData] = useState<PlanResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -45,21 +46,11 @@ export function PlanPage({ location }: PlanPageProps) {
     };
   }, [location, targetDate]);
 
-  const chartData = useMemo(
-    () =>
-      (data?.windows ?? []).map((window) => ({
-        category: window.category,
-        score: window.score,
-      })),
-    [data],
-  );
-
   return (
     <section className="dashboard-page">
       <header className="page-header split">
         <div>
           <h2>Daily Plan Copilot</h2>
-          <p>Best time windows for commute, exercise, and errands.</p>
         </div>
         <label className="date-picker" htmlFor="plan-date">
           Date
@@ -72,30 +63,16 @@ export function PlanPage({ location }: PlanPageProps) {
 
       {data ? (
         <>
-          <section className="panel chart-panel">
-            <h3>Window Scores</h3>
-            <div className="chart-wrap">
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="4 4" />
-                  <XAxis dataKey="category" />
-                  <YAxis domain={[0, 100]} />
-                  <Tooltip />
-                  <Bar dataKey="score" fill="#8f8f8f" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
           <section className="panel">
             <h3>Recommended Windows</h3>
             <div className="window-grid">
               {data.windows.map((window) => (
                 <article key={window.category} className="window-card">
                   <p className="window-title">{window.category}</p>
-                  <p className="window-hour">{String(window.best_hour).padStart(2, "0")}:00</p>
-                  <p className="window-score">{window.score.toFixed(0)}/100</p>
-                  <p className="window-summary">{window.summary}</p>
+                  <p className="window-meta">
+                    {formatHourLabel(window.best_hour, timeFormat)} · {window.score.toFixed(0)}/100
+                  </p>
+                  <p className="window-summary">{formatTextTimes(window.summary, timeFormat)}</p>
                 </article>
               ))}
             </div>

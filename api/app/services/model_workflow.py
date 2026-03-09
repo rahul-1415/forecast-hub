@@ -295,3 +295,52 @@ def predict_next_hour_temperature(db: Session, location_id: int) -> float | None
         # Fail soft so overview endpoints keep working even when model artifacts are unavailable.
         _load_model_cached.cache_clear()
         return None
+
+
+def predict_hourly_temperature_series(
+    db: Session, rows: list[HourlyWeather]
+) -> list[float | None]:
+    if not rows:
+        return []
+
+    active = get_active_model_version(db)
+    if active is None:
+        return [None] * len(rows)
+
+    base_defaults = {}
+    if active.params and isinstance(active.params.get("feature_defaults"), dict):
+        base_defaults = {
+            key: float(value)
+            for key, value in active.params["feature_defaults"].items()
+            if key in FEATURE_COLUMNS
+        }
+
+    frame = pd.DataFrame(
+        [
+            {
+                "hour": row.timestamp.hour,
+                "day_of_year": row.timestamp.timetuple().tm_yday,
+                "is_weekend": 1 if row.timestamp.weekday() >= 5 else 0,
+                "temperature_c": row.temperature_c,
+                "apparent_temperature_c": row.apparent_temperature_c,
+                "precipitation_mm": row.precipitation_mm,
+                "relative_humidity": row.relative_humidity,
+                "wind_speed_kph": row.wind_speed_kph,
+                "pressure_hpa": row.pressure_hpa,
+                "cloud_cover": row.cloud_cover,
+            }
+            for row in rows
+        ]
+    )
+
+    frame = frame.fillna(base_defaults)
+    if frame[FEATURE_COLUMNS].isnull().any().any():
+        return [None] * len(rows)
+
+    try:
+        model = _load_model_cached(active.model_uri)
+        predictions = model.predict(frame[FEATURE_COLUMNS])
+        return [float(value) for value in predictions]
+    except Exception:
+        _load_model_cached.cache_clear()
+        return [None] * len(rows)

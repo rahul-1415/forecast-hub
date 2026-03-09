@@ -3,11 +3,30 @@ import type { LocationSuggestion } from "../types";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
-  if (!response.ok) {
-    throw new Error(`Request failed (${response.status})`);
+  const url = `${API_BASE_URL}${path}`;
+  let lastNetworkError: Error | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+      return response.json() as Promise<T>;
+    } catch (error) {
+      if (!(error instanceof TypeError)) {
+        throw error;
+      }
+
+      lastNetworkError = error;
+      if (attempt < 2) {
+        const delayMs = 250 * (attempt + 1);
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+      }
+    }
   }
-  return response.json() as Promise<T>;
+
+  throw lastNetworkError ?? new Error("Request failed");
 }
 
 export async function getOverview(location: string) {

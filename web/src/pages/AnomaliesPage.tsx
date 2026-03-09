@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 
 import { getAnomalies } from "../api/client";
 import type { AnomaliesResponse } from "../types";
+import { formatDateTimeLabel, formatTextTimes, type TimeFormat } from "../utils/time";
 
 type AnomaliesPageProps = {
   location: string;
+  timeFormat: TimeFormat;
 };
 
-export function AnomaliesPage({ location }: AnomaliesPageProps) {
+export function AnomaliesPage({ location, timeFormat }: AnomaliesPageProps) {
   const [windowDays, setWindowDays] = useState(7);
   const [data, setData] = useState<AnomaliesResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -45,7 +47,6 @@ export function AnomaliesPage({ location }: AnomaliesPageProps) {
       <header className="page-header split">
         <div>
           <h2>Weather Anomaly Detector</h2>
-          <p>Rapid shifts and outlier conditions detected from historical baselines.</p>
         </div>
         <label className="date-picker" htmlFor="anomaly-window">
           Window
@@ -87,7 +88,7 @@ export function AnomaliesPage({ location }: AnomaliesPageProps) {
                 <tbody>
                   {data.items.map((item) => (
                     <tr key={`${item.detected_at}-${item.metric}-${item.anomaly_type}`}>
-                      <td>{new Date(item.detected_at).toLocaleString()}</td>
+                      <td>{formatDateTimeLabel(item.detected_at, timeFormat)}</td>
                       <td>{item.metric}</td>
                       <td>{item.anomaly_type}</td>
                       <td>
@@ -95,7 +96,7 @@ export function AnomaliesPage({ location }: AnomaliesPageProps) {
                       </td>
                       <td>{item.observed_value?.toFixed(2) ?? "-"}</td>
                       <td>{item.expected_value?.toFixed(2) ?? "-"}</td>
-                      <td>{item.summary}</td>
+                      <td>{formatTextTimes(item.summary, timeFormat)}</td>
                     </tr>
                   ))}
                 </tbody>

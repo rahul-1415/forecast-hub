@@ -23,15 +23,24 @@ class OverviewStats(BaseModel):
     avg_wind_kph: float | None
 
 
+class HourlyTemperaturePoint(BaseModel):
+    timestamp: datetime
+    temperature_c: float | None
+
+
 class OverviewResponse(BaseModel):
     location: LocationRead
     generated_at: datetime
     current_temperature_c: float | None = None
+    next_hour_temperature_open_meteo_c: float | None = None
+    next_hour_temperature_custom_model_c: float | None = None
     next_24h: OverviewStats
     top_recommendations: list[str]
     alert_level: str
     anomalies_last_7d: int
     next_hour_temperature_prediction_c: float | None = None
+    hourly_temperatures_24h: list[HourlyTemperaturePoint] = []
+    hourly_temperatures_24h_custom_model: list[HourlyTemperaturePoint] = []
 
 
 class PlanWindowItem(BaseModel):

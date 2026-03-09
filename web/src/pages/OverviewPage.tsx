@@ -1,18 +1,20 @@
 import { MetricCard } from "../components/MetricCard";
 import type { OverviewResponse } from "../types";
+import { formatTextTimes, type TimeFormat } from "../utils/time";
 
 type OverviewPageProps = {
   data: OverviewResponse | null;
   loading: boolean;
   error: string | null;
+  predictionSource: "open_meteo" | "custom_ml";
+  timeFormat: TimeFormat;
 };
 
-export function OverviewPage({ data, loading, error }: OverviewPageProps) {
+export function OverviewPage({ data, loading, error, predictionSource, timeFormat }: OverviewPageProps) {
   return (
     <section className="dashboard-page">
       <header className="page-header">
         <h2>Overview</h2>
-        <p>{data ? `Generated at ${new Date(data.generated_at).toLocaleString()}` : "Fetching latest conditions..."}</p>
       </header>
 
       {loading ? (
@@ -45,11 +47,6 @@ export function OverviewPage({ data, loading, error }: OverviewPageProps) {
             />
             <MetricCard label="Avg Wind" value={`${data.next_24h.avg_wind_kph?.toFixed(1) ?? "-"} kph`} />
             <MetricCard
-              label="Model Next-Hour Temp"
-              value={`${data.next_hour_temperature_prediction_c?.toFixed(1) ?? "-"} C`}
-              hint="MLflow active model"
-            />
-            <MetricCard
               label="Alert Level"
               value={data.alert_level.toUpperCase()}
               tone={data.alert_level === "high" ? "danger" : data.alert_level === "medium" ? "warning" : "good"}
@@ -60,8 +57,8 @@ export function OverviewPage({ data, loading, error }: OverviewPageProps) {
           <section className="panel">
             <h3>AI Suggestions</h3>
             <ul className="advice-list">
-              {data.top_recommendations.map((tip) => (
-                <li key={tip}>{tip}</li>
+              {data.top_recommendations.map((tip, index) => (
+                <li key={`${index}-${tip}`}>{formatTextTimes(tip, timeFormat)}</li>
               ))}
             </ul>
           </section>
