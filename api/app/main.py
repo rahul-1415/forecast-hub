@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,6 +13,7 @@ from .routers.notifications import router as notifications_router
 from .services.location import ensure_default_location
 from .services.notifications import start_notification_scheduler, stop_notification_scheduler
 
+logger = logging.getLogger(__name__)
 app = FastAPI(title=settings.app_name)
 
 app.add_middleware(
@@ -20,17 +23,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.state.db_ready = False
 
 
 @app.on_event("startup")
 def startup() -> None:
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
+    db_ready = False
     try:
-        ensure_default_location(db)
-    finally:
-        db.close()
-    start_notification_scheduler()
+        Base.metadata.create_all(bind=engine)
+        db = SessionLocal()
+        try:
+            ensure_default_location(db)
+        finally:
+            db.close()
+        db_ready = True
+    except Exception as exc:
+        # Do not crash process on transient DB outages/quota blocks; keep service alive.
+        logger.exception("Database initialization failed during startup: %s", exc)
+
+    app.state.db_ready = db_ready
+    if db_ready:
+        start_notification_scheduler()
+    else:
+        logger.warning("Skipping notification scheduler startup because database is unavailable.")
 
 
 @app.on_event("shutdown")
