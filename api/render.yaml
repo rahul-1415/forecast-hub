@@ -7,3 +7,6 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
     autoDeploy: true
+    envVars:
+      - key: SUPABASE_DATABASE_URL
+        sync: false

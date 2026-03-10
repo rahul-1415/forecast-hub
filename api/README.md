@@ -30,3 +30,22 @@ uvicorn app.main:app --reload --port 8000
 - `GET /v1/models/versions`
 
 Training writes runs and artifacts to MLflow (`MLFLOW_TRACKING_URI`).
+
+## Supabase Cutover
+
+1. Create a Supabase project and copy its Postgres connection string.
+2. Run the migration script from `api/`:
+
+```bash
+SOURCE_DATABASE_URL="<current_postgres_url>" \
+SUPABASE_DATABASE_URL="<supabase_postgres_url>" \
+bash scripts/migrate_postgres_to_supabase.sh
+```
+
+3. Point the API to Supabase in env:
+
+```env
+SUPABASE_DATABASE_URL=<supabase_postgres_url>
+```
+
+`SUPABASE_DATABASE_URL` is preferred over `DATABASE_URL` when both are set.

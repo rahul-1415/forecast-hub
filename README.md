@@ -72,6 +72,7 @@ npm run dev
 ### API (`api/.env`)
 
 - `DATABASE_URL` (Supabase/Neon Postgres URL)
+- `SUPABASE_DATABASE_URL` (optional override; if set, this is used instead of `DATABASE_URL`)
 - `FRONTEND_ORIGIN` (Vercel domain, comma separated if multiple)
 - `SCHEDULER_JOB_TOKEN` (shared secret for GitHub cron)
 - `OPENAI_API_KEY` (optional)
@@ -105,6 +106,18 @@ npm run dev
 3. Build command: `pip install -r requirements.txt`.
 4. Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`.
 5. Set env vars from `api/.env.example`.
+
+## Postgres Migration (Neon -> Supabase)
+
+Run from `api/`:
+
+```bash
+SOURCE_DATABASE_URL="<current_neon_or_postgres_url>" \
+SUPABASE_DATABASE_URL="<supabase_postgres_url>" \
+bash scripts/migrate_postgres_to_supabase.sh
+```
+
+Then set `SUPABASE_DATABASE_URL` in Render for the API service and redeploy.
 
 ### Vercel (Web)
 

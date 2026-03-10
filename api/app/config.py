@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     database_url: str = "sqlite:///./forecast_hub.db"
+    supabase_database_url: str | None = None
 
     frontend_origin: str = "http://localhost:5173"
 
@@ -73,7 +74,8 @@ class Settings(BaseSettings):
 
     @property
     def sqlalchemy_database_url(self) -> str:
-        url = self.database_url.strip()
+        raw_url = self.supabase_database_url or self.database_url
+        url = raw_url.strip()
         if url.startswith("postgres://"):
             url = f"postgresql://{url.removeprefix('postgres://')}"
         if url.startswith("postgresql://"):
