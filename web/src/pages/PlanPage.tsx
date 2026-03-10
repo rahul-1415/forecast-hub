@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { getPlan } from "../api/client";
 import type { PlanResponse } from "../types";
@@ -18,6 +18,23 @@ export function PlanPage({ location, timeFormat }: PlanPageProps) {
   const [data, setData] = useState<PlanResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
+
+  function openDatePicker() {
+    const input = dateInputRef.current;
+    if (!input) {
+      return;
+    }
+
+    const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+    if (typeof pickerInput.showPicker === "function") {
+      pickerInput.showPicker();
+      return;
+    }
+
+    input.focus();
+    input.click();
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -52,10 +69,18 @@ export function PlanPage({ location, timeFormat }: PlanPageProps) {
         <div>
           <h2>Daily Plan Copilot</h2>
         </div>
-        <label className="date-picker" htmlFor="plan-date">
-          Date
-          <input id="plan-date" type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} />
-        </label>
+        <div className="date-picker date-picker-inline">
+          <button type="button" className="date-picker-label-button" onClick={openDatePicker}>
+            Date
+          </button>
+          <input
+            ref={dateInputRef}
+            id="plan-date"
+            type="date"
+            value={targetDate}
+            onChange={(event) => setTargetDate(event.target.value)}
+          />
+        </div>
       </header>
 
       {loading ? <p className="status-text">Loading plan...</p> : null}

@@ -233,6 +233,8 @@ export default function App() {
       currentTemperatureC={activeHeaderTemperature}
       currentTemperatureLoading={activeOverviewLoading}
       hourlyTemperatures24h={activeHourlyTemperatures24h}
+      customMlHourlyTemperatures={customMlHourlyTemperatures}
+      customMlNextHourTemperatureC={activeOverview?.next_hour_temperature_custom_model_c ?? null}
       hourlyTemperaturesLoading={activeOverviewLoading}
       locationTemperatures={locationTemperatures}
       locationTemperatureLoading={locationTemperatureLoading}

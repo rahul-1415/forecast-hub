@@ -1,6 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { getLocationSuggestions } from "../api/client";
+import { NumericSparkline } from "./NumericSparkline";
 import type { LocationSuggestion } from "../types";
 import { formatHourFromTimestamp, type TimeFormat } from "../utils/time";
 
@@ -13,6 +14,8 @@ type DashboardShellProps = {
   currentTemperatureC: number | null;
   currentTemperatureLoading: boolean;
   hourlyTemperatures24h: { timestamp: string; temperature_c: number | null }[];
+  customMlHourlyTemperatures: { timestamp: string; temperature_c: number | null }[];
+  customMlNextHourTemperatureC: number | null;
   hourlyTemperaturesLoading: boolean;
   locationTemperatures: Record<string, number | null>;
   locationTemperatureLoading: Record<string, boolean>;
@@ -25,6 +28,26 @@ type DashboardShellProps = {
   children: ReactNode;
 };
 
+type NotificationPreferences = {
+  enabled: boolean;
+  time: string;
+  timezone: string;
+  location: string;
+  channel: "email" | "telegram" | "mobile";
+  email: string;
+  telegram: string;
+  mobile: string;
+  clothingStyle: "casual" | "business" | "sporty" | "outdoor";
+  quietHoursEnabled: boolean;
+  quietStart: string;
+  quietEnd: string;
+  includeOutfit: boolean;
+  includeHealth: boolean;
+  includeCommute: boolean;
+};
+
+const NOTIFICATION_PREFS_KEY = "fh_notification_preferences_v1";
+
 export function DashboardShell({
   locations,
   activeLocation,
@@ -34,6 +57,8 @@ export function DashboardShell({
   currentTemperatureC,
   currentTemperatureLoading,
   hourlyTemperatures24h,
+  customMlHourlyTemperatures,
+  customMlNextHourTemperatureC,
   hourlyTemperaturesLoading,
   locationTemperatures,
   locationTemperatureLoading,
@@ -51,6 +76,42 @@ export function DashboardShell({
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [showNotificationSetup, setShowNotificationSetup] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState<string | null>(null);
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(() => {
+    const defaults: NotificationPreferences = {
+      enabled: true,
+      time: "08:00",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      location: activeLocation,
+      channel: "email",
+      email: "",
+      telegram: "",
+      mobile: "",
+      clothingStyle: "casual",
+      quietHoursEnabled: true,
+      quietStart: "22:00",
+      quietEnd: "07:00",
+      includeOutfit: true,
+      includeHealth: true,
+      includeCommute: true,
+    };
+
+    if (typeof window === "undefined") {
+      return defaults;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(NOTIFICATION_PREFS_KEY);
+      if (!raw) {
+        return defaults;
+      }
+      const parsed = JSON.parse(raw) as Partial<NotificationPreferences>;
+      return { ...defaults, ...parsed };
+    } catch {
+      return defaults;
+    }
+  });
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const backgroundRef = useRef<HTMLDivElement | null>(null);
 
@@ -64,6 +125,154 @@ export function DashboardShell({
     }
     return currentTemperatureC.toFixed(1);
   }, [currentTemperatureC, currentTemperatureLoading]);
+  const sparklinePoints = useMemo(
+    () =>
+      hourlyTemperatures24h.map((item, index) => ({
+        label: index === 0 ? "Now" : formatHourFromTimestamp(item.timestamp, timeFormat),
+        value: item.temperature_c,
+      })),
+    [hourlyTemperatures24h, timeFormat],
+  );
+  const customMlValidTemperatures = useMemo(
+    () =>
+      customMlHourlyTemperatures
+        .map((item) => item.temperature_c)
+        .filter((value): value is number => value != null && Number.isFinite(value)),
+    [customMlHourlyTemperatures],
+  );
+  const customMlNowTemperature = customMlHourlyTemperatures[0]?.temperature_c ?? null;
+  const customMlMinTemperature =
+    customMlValidTemperatures.length > 0 ? Math.min(...customMlValidTemperatures) : null;
+  const customMlMaxTemperature =
+    customMlValidTemperatures.length > 0 ? Math.max(...customMlValidTemperatures) : null;
+  const customMlAverageTemperature =
+    customMlValidTemperatures.length > 0
+      ? customMlValidTemperatures.reduce((sum, value) => sum + value, 0) / customMlValidTemperatures.length
+      : null;
+  const customMlPointCount = customMlValidTemperatures.length;
+
+  function formatModelTemp(value: number | null) {
+    if (value == null) {
+      return "--";
+    }
+    return `${value.toFixed(1)}°C`;
+  }
+  const nextHourDelta = useMemo(() => {
+    const currentHour = hourlyTemperatures24h[0]?.temperature_c;
+    const nextHour = hourlyTemperatures24h[1]?.temperature_c;
+    if (currentHour == null || nextHour == null) {
+      return null;
+    }
+    return nextHour - currentHour;
+  }, [hourlyTemperatures24h]);
+  const notificationPreview = useMemo(() => {
+    const weatherBits: string[] = [];
+
+    if (notificationPreferences.includeOutfit) {
+      if (currentTemperatureC == null) {
+        weatherBits.push("Check today's weather before choosing your outfit.");
+      } else if (currentTemperatureC <= 5) {
+        weatherBits.push("Wear a warm coat and insulated shoes.");
+      } else if (currentTemperatureC <= 15) {
+        weatherBits.push("A light jacket or layered outfit is recommended.");
+      } else if (currentTemperatureC <= 25) {
+        weatherBits.push("A breathable top with light layers should work.");
+      } else {
+        weatherBits.push("Wear lightweight clothes and stay cool.");
+      }
+    }
+
+    if (notificationPreferences.includeCommute) {
+      if (nextHourDelta == null) {
+        weatherBits.push("Review commute conditions before leaving.");
+      } else if (nextHourDelta >= 2) {
+        weatherBits.push("Temperature is rising; lighter outerwear is fine.");
+      } else if (nextHourDelta <= -2) {
+        weatherBits.push("Temperature is dropping; carry an extra layer.");
+      } else {
+        weatherBits.push("Commute weather is fairly stable.");
+      }
+    }
+
+    if (notificationPreferences.includeHealth) {
+      if (currentTemperatureC != null && currentTemperatureC >= 30) {
+        weatherBits.push("Hydrate early and avoid extended midday sun.");
+      } else if (currentTemperatureC != null && currentTemperatureC <= 0) {
+        weatherBits.push("Protect exposed skin from cold air.");
+      } else {
+        weatherBits.push("Keep hydration and comfort breaks in mind.");
+      }
+    }
+
+    return weatherBits.slice(0, 3).join(" ");
+  }, [currentTemperatureC, nextHourDelta, notificationPreferences.includeCommute, notificationPreferences.includeHealth, notificationPreferences.includeOutfit]);
+  const selectedNotificationContact = useMemo(() => {
+    if (notificationPreferences.channel === "email") {
+      return notificationPreferences.email.trim() || "No email set";
+    }
+    if (notificationPreferences.channel === "telegram") {
+      return notificationPreferences.telegram.trim() || "No Telegram handle set";
+    }
+    return notificationPreferences.mobile.trim() || "No mobile number set";
+  }, [
+    notificationPreferences.channel,
+    notificationPreferences.email,
+    notificationPreferences.mobile,
+    notificationPreferences.telegram,
+  ]);
+
+  function updateNotificationPreference<K extends keyof NotificationPreferences>(
+    key: K,
+    value: NotificationPreferences[K],
+  ) {
+    setNotificationPreferences((previous) => ({ ...previous, [key]: value }));
+  }
+
+  function sendTestNotification() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const body = `${notificationPreferences.time} · ${notificationPreview || "Your daily forecast recommendation is ready."}`;
+    const encodedBody = encodeURIComponent(body);
+    const encodedSubject = encodeURIComponent(`Forecast Hub · ${notificationPreferences.location}`);
+
+    if (notificationPreferences.channel === "email") {
+      if (!notificationPreferences.email.trim()) {
+        setNotificationStatus("Add an email address first.");
+        return;
+      }
+      window.open(
+        `mailto:${encodeURIComponent(notificationPreferences.email.trim())}?subject=${encodedSubject}&body=${encodedBody}`,
+        "_blank",
+      );
+      setNotificationStatus("Opened email draft for test notification.");
+      return;
+    }
+
+    if (notificationPreferences.channel === "telegram") {
+      const handle = notificationPreferences.telegram.trim().replace(/^@/, "");
+      if (!handle) {
+        setNotificationStatus("Add a Telegram username first.");
+        return;
+      }
+      window.open(`https://t.me/${encodeURIComponent(handle)}?text=${encodedBody}`, "_blank");
+      setNotificationStatus("Opened Telegram compose link for test notification.");
+      return;
+    }
+
+    if (!notificationPreferences.mobile.trim()) {
+      setNotificationStatus("Add a mobile number first.");
+      return;
+    }
+    window.open(`sms:${encodeURIComponent(notificationPreferences.mobile.trim())}?body=${encodedBody}`, "_blank");
+    setNotificationStatus("Opened SMS draft for test notification.");
+  }
+
+  function saveNotificationPreferences() {
+    setNotificationStatus("Notification preferences saved in this browser.");
+    setShowNotificationSetup(false);
+  }
 
   useEffect(() => {
     const query = locationInput.trim();
@@ -100,6 +309,23 @@ export function DashboardShell({
       window.clearTimeout(timer);
     };
   }, [locationInput]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(notificationPreferences));
+  }, [notificationPreferences]);
+
+  useEffect(() => {
+    if (!locations.includes(notificationPreferences.location)) {
+      setNotificationPreferences((previous) => ({
+        ...previous,
+        location: activeLocation,
+      }));
+    }
+  }, [activeLocation, locations, notificationPreferences.location]);
 
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
@@ -289,6 +515,17 @@ export function DashboardShell({
             </button>
           </div>
 
+          <button
+            type="button"
+            className="notification-setup-button"
+            onClick={() => {
+              setNotificationStatus(null);
+              setShowNotificationSetup(true);
+            }}
+          >
+            Setup Notification
+          </button>
+
           <div className="header-settings" ref={settingsRef}>
             <button
               type="button"
@@ -388,7 +625,51 @@ export function DashboardShell({
           <p className="app-main-eyebrow">My Location</p>
           <h2 className="app-main-location">{activeLocation}</h2>
           <p className="app-main-temperature">{displayTemperature}°C</p>
+          {nextHourDelta != null ? (
+            <p className={nextHourDelta > 0 ? "app-main-delta up" : nextHourDelta < 0 ? "app-main-delta down" : "app-main-delta flat"}>
+              {nextHourDelta > 0 ? "↑" : nextHourDelta < 0 ? "↓" : "→"} {Math.abs(nextHourDelta).toFixed(1)}° next hour
+            </p>
+          ) : null}
         </header>
+        {predictionSource === "custom_ml" ? (
+          <section className="custom-ml-panel" aria-label="Custom ML model outputs">
+            <div className="custom-ml-panel-header">
+              <h3>Custom ML Model Output</h3>
+              <p className="custom-ml-panel-note">Model-only values (Open-Meteo excluded)</p>
+            </div>
+            <div className="custom-ml-metrics">
+              <article className="custom-ml-metric">
+                <span className="custom-ml-metric-label">Current (Model)</span>
+                <span className="custom-ml-metric-value">{formatModelTemp(customMlNowTemperature)}</span>
+              </article>
+              <article className="custom-ml-metric">
+                <span className="custom-ml-metric-label">Next Hour (Model)</span>
+                <span className="custom-ml-metric-value">{formatModelTemp(customMlNextHourTemperatureC)}</span>
+              </article>
+              <article className="custom-ml-metric">
+                <span className="custom-ml-metric-label">24h Min (Model)</span>
+                <span className="custom-ml-metric-value">{formatModelTemp(customMlMinTemperature)}</span>
+              </article>
+              <article className="custom-ml-metric">
+                <span className="custom-ml-metric-label">24h Max (Model)</span>
+                <span className="custom-ml-metric-value">{formatModelTemp(customMlMaxTemperature)}</span>
+              </article>
+              <article className="custom-ml-metric">
+                <span className="custom-ml-metric-label">24h Avg (Model)</span>
+                <span className="custom-ml-metric-value">{formatModelTemp(customMlAverageTemperature)}</span>
+              </article>
+              <article className="custom-ml-metric">
+                <span className="custom-ml-metric-label">Model Points</span>
+                <span className="custom-ml-metric-value">{customMlPointCount}</span>
+              </article>
+            </div>
+            {customMlPointCount === 0 ? (
+              <p className="custom-ml-empty-note">
+                No loadable ML model output found. Trigger `train-model` to refresh model artifacts.
+              </p>
+            ) : null}
+          </section>
+        ) : null}
         <section className="hourly-slider-panel" aria-label="Hourly temperature forecast">
           <div className="hourly-slider-track">
             {hourlyTemperaturesLoading
@@ -396,6 +677,7 @@ export function DashboardShell({
                   <article key={`hourly-loading-${index}`} className="hourly-item loading">
                     <span className="hourly-time">--</span>
                     <span className="hourly-temp">--°</span>
+                    <span className="hourly-delta">--</span>
                   </article>
                 ))
               : hourlyTemperatures24h.length === 0
@@ -403,9 +685,24 @@ export function DashboardShell({
                   <article className="hourly-item">
                     <span className="hourly-time">No data</span>
                     <span className="hourly-temp">--°</span>
+                    <span className="hourly-delta">--</span>
                   </article>
                   )
-                : hourlyTemperatures24h.map((item, index) => (
+                : hourlyTemperatures24h.map((item, index) => {
+                    const previousTemperature = index > 0 ? hourlyTemperatures24h[index - 1]?.temperature_c : null;
+                    const hourlyDelta =
+                      index > 0 && item.temperature_c != null && previousTemperature != null
+                        ? item.temperature_c - previousTemperature
+                        : null;
+                    const hourlyDeltaClass =
+                      hourlyDelta == null
+                        ? "hourly-delta"
+                        : hourlyDelta > 0
+                          ? "hourly-delta up"
+                          : hourlyDelta < 0
+                            ? "hourly-delta down"
+                            : "hourly-delta flat";
+                    return (
                     <article
                       key={`${item.timestamp}-${index}`}
                       className={index === 0 ? "hourly-item current" : "hourly-item"}
@@ -416,12 +713,250 @@ export function DashboardShell({
                       <span className="hourly-temp">
                         {item.temperature_c == null ? "--°" : `${Math.round(item.temperature_c)}°`}
                       </span>
+                      <span className={hourlyDeltaClass}>
+                        {index === 0
+                          ? "Base"
+                          : hourlyDelta == null
+                            ? "--"
+                            : `${hourlyDelta > 0 ? "↑" : hourlyDelta < 0 ? "↓" : "→"} ${Math.abs(hourlyDelta).toFixed(1)}°`}
+                      </span>
                     </article>
-                  ))}
+                    );
+                  })}
           </div>
+        </section>
+        <section className="sparkline-panel" aria-label="24-hour temperature trend">
+          <div className="sparkline-header">
+            <h3>24h Temperature Trend</h3>
+            {nextHourDelta != null ? (
+              <p className={nextHourDelta > 0 ? "sparkline-delta up" : nextHourDelta < 0 ? "sparkline-delta down" : "sparkline-delta flat"}>
+                {nextHourDelta > 0 ? "↑" : nextHourDelta < 0 ? "↓" : "→"} {Math.abs(nextHourDelta).toFixed(1)}° vs now
+              </p>
+            ) : null}
+          </div>
+          {hourlyTemperaturesLoading ? <p className="status-text">Loading trend...</p> : <NumericSparkline points={sparklinePoints} unit="°C" />}
         </section>
         {children}
       </main>
+
+      {showNotificationSetup ? (
+        <div
+          className="notification-modal-backdrop"
+          onClick={() => setShowNotificationSetup(false)}
+          role="presentation"
+        >
+          <section
+            className="notification-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Setup Notification"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="notification-modal-header">
+              <h3>Setup Notification</h3>
+              <button
+                type="button"
+                className="notification-modal-close"
+                onClick={() => setShowNotificationSetup(false)}
+                aria-label="Close setup notification"
+              >
+                ×
+              </button>
+            </header>
+
+            <p className="notification-modal-note">
+              Enter email, Telegram, or mobile contact and choose where daily personalized recommendations should be sent.
+            </p>
+
+            <div className="notification-form-grid">
+              <label className="notification-field checkbox">
+                <input
+                  type="checkbox"
+                  checked={notificationPreferences.enabled}
+                  onChange={(event) => updateNotificationPreference("enabled", event.target.checked)}
+                />
+                <span>Enable daily notifications</span>
+              </label>
+
+              <label className="notification-field">
+                <span>Daily time</span>
+                <input
+                  type="time"
+                  value={notificationPreferences.time}
+                  onChange={(event) => updateNotificationPreference("time", event.target.value)}
+                />
+              </label>
+
+              <label className="notification-field">
+                <span>Timezone</span>
+                <input
+                  type="text"
+                  value={notificationPreferences.timezone}
+                  onChange={(event) => updateNotificationPreference("timezone", event.target.value)}
+                />
+              </label>
+
+              <label className="notification-field">
+                <span>Location</span>
+                <select
+                  value={notificationPreferences.location}
+                  onChange={(event) => updateNotificationPreference("location", event.target.value)}
+                >
+                  {locations.map((location) => (
+                    <option key={location} value={location}>
+                      {location}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="notification-field">
+                <span>Delivery channel</span>
+                <select
+                  value={notificationPreferences.channel}
+                  onChange={(event) =>
+                    updateNotificationPreference(
+                      "channel",
+                      event.target.value as NotificationPreferences["channel"],
+                    )
+                  }
+                >
+                  <option value="email">Email</option>
+                  <option value="telegram">Telegram</option>
+                  <option value="mobile">Mobile (SMS)</option>
+                </select>
+              </label>
+
+              <label className="notification-field">
+                <span>Email contact</span>
+                <input
+                  type="email"
+                  value={notificationPreferences.email}
+                  onChange={(event) => updateNotificationPreference("email", event.target.value)}
+                  placeholder="you@example.com"
+                />
+              </label>
+
+              <label className="notification-field">
+                <span>Telegram contact</span>
+                <input
+                  type="text"
+                  value={notificationPreferences.telegram}
+                  onChange={(event) => updateNotificationPreference("telegram", event.target.value)}
+                  placeholder="@username"
+                />
+              </label>
+
+              <label className="notification-field">
+                <span>Mobile contact</span>
+                <input
+                  type="tel"
+                  value={notificationPreferences.mobile}
+                  onChange={(event) => updateNotificationPreference("mobile", event.target.value)}
+                  placeholder="+1 555 000 0000"
+                />
+              </label>
+
+              <label className="notification-field">
+                <span>Clothing style</span>
+                <select
+                  value={notificationPreferences.clothingStyle}
+                  onChange={(event) =>
+                    updateNotificationPreference(
+                      "clothingStyle",
+                      event.target.value as NotificationPreferences["clothingStyle"],
+                    )
+                  }
+                >
+                  <option value="casual">Casual</option>
+                  <option value="business">Business</option>
+                  <option value="sporty">Sporty</option>
+                  <option value="outdoor">Outdoor</option>
+                </select>
+              </label>
+
+              <label className="notification-field checkbox">
+                <input
+                  type="checkbox"
+                  checked={notificationPreferences.quietHoursEnabled}
+                  onChange={(event) => updateNotificationPreference("quietHoursEnabled", event.target.checked)}
+                />
+                <span>Enable quiet hours</span>
+              </label>
+
+              <label className="notification-field">
+                <span>Quiet start</span>
+                <input
+                  type="time"
+                  value={notificationPreferences.quietStart}
+                  onChange={(event) => updateNotificationPreference("quietStart", event.target.value)}
+                  disabled={!notificationPreferences.quietHoursEnabled}
+                />
+              </label>
+
+              <label className="notification-field">
+                <span>Quiet end</span>
+                <input
+                  type="time"
+                  value={notificationPreferences.quietEnd}
+                  onChange={(event) => updateNotificationPreference("quietEnd", event.target.value)}
+                  disabled={!notificationPreferences.quietHoursEnabled}
+                />
+              </label>
+
+              <div className="notification-field notification-toggles">
+                <span>Include recommendations</span>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={notificationPreferences.includeOutfit}
+                    onChange={(event) => updateNotificationPreference("includeOutfit", event.target.checked)}
+                  />
+                  <span>Outfit + packing</span>
+                </label>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={notificationPreferences.includeHealth}
+                    onChange={(event) => updateNotificationPreference("includeHealth", event.target.checked)}
+                  />
+                  <span>Health alerts</span>
+                </label>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={notificationPreferences.includeCommute}
+                    onChange={(event) => updateNotificationPreference("includeCommute", event.target.checked)}
+                  />
+                  <span>Commute tips</span>
+                </label>
+              </div>
+            </div>
+
+            <section className="notification-preview">
+              <p className="notification-preview-label">Preview</p>
+              <p className="notification-preview-title">
+                Forecast Hub · {notificationPreferences.location} · {notificationPreferences.time}
+              </p>
+              <p className="notification-preview-contact">
+                {notificationPreferences.channel.toUpperCase()} · {selectedNotificationContact}
+              </p>
+              <p className="notification-preview-body">{notificationPreview}</p>
+            </section>
+
+            {notificationStatus ? <p className="notification-status">{notificationStatus}</p> : null}
+
+            <footer className="notification-modal-actions">
+              <button type="button" onClick={sendTestNotification}>
+                Send Test
+              </button>
+              <button type="button" className="primary" onClick={saveNotificationPreferences}>
+                Save
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

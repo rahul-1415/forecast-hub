@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { getOutfit } from "../api/client";
 import { MetricCard } from "../components/MetricCard";
@@ -19,6 +19,23 @@ export function OutfitPage({ location, timeFormat }: OutfitPageProps) {
   const [data, setData] = useState<OutfitResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
+
+  function openDatePicker() {
+    const input = dateInputRef.current;
+    if (!input) {
+      return;
+    }
+
+    const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+    if (typeof pickerInput.showPicker === "function") {
+      pickerInput.showPicker();
+      return;
+    }
+
+    input.focus();
+    input.click();
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -53,15 +70,18 @@ export function OutfitPage({ location, timeFormat }: OutfitPageProps) {
         <div>
           <h2>Outfit + Packing Assistant</h2>
         </div>
-        <label className="date-picker" htmlFor="outfit-date">
-          Date
+        <div className="date-picker date-picker-inline">
+          <button type="button" className="date-picker-label-button" onClick={openDatePicker}>
+            Date
+          </button>
           <input
+            ref={dateInputRef}
             id="outfit-date"
             type="date"
             value={targetDate}
             onChange={(event) => setTargetDate(event.target.value)}
           />
-        </label>
+        </div>
       </header>
 
       {loading ? <p className="status-text">Loading outfit guidance...</p> : null}

@@ -1,6 +1,19 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -138,3 +151,17 @@ class ModelVersion(Base):
     feature_columns: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
     promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+
+
+class ModelArtifact(Base):
+    __tablename__ = "model_artifacts"
+    __table_args__ = (UniqueConstraint("model_version_id", name="uq_model_artifact_model_version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    model_version_id: Mapped[int] = mapped_column(
+        ForeignKey("model_versions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    artifact_format: Mapped[str] = mapped_column(String(32), default="joblib")
+    artifact_bytes: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())

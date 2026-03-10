@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { getHealth } from "../api/client";
+import { CircularGauge } from "../components/CircularGauge";
 import type { HealthResponse } from "../types";
 import { formatTextTimes, type TimeFormat } from "../utils/time";
 
@@ -9,31 +10,28 @@ type HealthPageProps = {
   timeFormat: TimeFormat;
 };
 
-type RiskBarProps = {
-  label: string;
-  value: number;
-  invert?: boolean;
-};
-
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function RiskBar({ label, value, invert = false }: RiskBarProps) {
+function toneForRisk(value: number, invert = false): "good" | "warning" | "danger" {
   const normalized = Math.max(0, Math.min(100, value));
-  const tone = invert ? (normalized >= 70 ? "good" : normalized >= 40 ? "warning" : "danger") : normalized >= 70 ? "danger" : normalized >= 40 ? "warning" : "good";
-
-  return (
-    <div className="risk-row">
-      <div className="risk-label-wrap">
-        <p>{label}</p>
-        <strong>{normalized}</strong>
-      </div>
-      <div className="risk-track">
-        <div className={`risk-fill ${tone}`} style={{ width: `${normalized}%` }} />
-      </div>
-    </div>
-  );
+  if (invert) {
+    if (normalized >= 70) {
+      return "good";
+    }
+    if (normalized >= 40) {
+      return "warning";
+    }
+    return "danger";
+  }
+  if (normalized >= 70) {
+    return "danger";
+  }
+  if (normalized >= 40) {
+    return "warning";
+  }
+  return "good";
 }
 
 export function HealthPage({ location, timeFormat }: HealthPageProps) {
@@ -41,6 +39,23 @@ export function HealthPage({ location, timeFormat }: HealthPageProps) {
   const [data, setData] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
+
+  function openDatePicker() {
+    const input = dateInputRef.current;
+    if (!input) {
+      return;
+    }
+
+    const pickerInput = input as HTMLInputElement & { showPicker?: () => void };
+    if (typeof pickerInput.showPicker === "function") {
+      pickerInput.showPicker();
+      return;
+    }
+
+    input.focus();
+    input.click();
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -75,15 +90,18 @@ export function HealthPage({ location, timeFormat }: HealthPageProps) {
         <div>
           <h2>Health Alerts Generator</h2>
         </div>
-        <label className="date-picker" htmlFor="health-date">
-          Date
+        <div className="date-picker date-picker-inline">
+          <button type="button" className="date-picker-label-button" onClick={openDatePicker}>
+            Date
+          </button>
           <input
+            ref={dateInputRef}
             id="health-date"
             type="date"
             value={targetDate}
             onChange={(event) => setTargetDate(event.target.value)}
           />
-        </label>
+        </div>
       </header>
 
       {loading ? <p className="status-text">Loading health risks...</p> : null}
@@ -93,12 +111,42 @@ export function HealthPage({ location, timeFormat }: HealthPageProps) {
         <>
           <section className="panel">
             <h3>Risk Scores</h3>
-            <div className="risk-grid">
-              <RiskBar label="Heat Risk" value={data.heat_risk} />
-              <RiskBar label="Cold Risk" value={data.cold_risk} />
-              <RiskBar label="Dehydration Risk" value={data.dehydration_risk} />
-              <RiskBar label="Asthma Proxy Risk" value={data.asthma_proxy_risk} />
-              <RiskBar label="Sleep Comfort Index" value={data.sleep_comfort_index} invert />
+            <div className="risk-ring-grid">
+              <CircularGauge
+                label="Heat Risk"
+                value={data.heat_risk}
+                max={100}
+                unit="%"
+                tone={toneForRisk(data.heat_risk)}
+              />
+              <CircularGauge
+                label="Cold Risk"
+                value={data.cold_risk}
+                max={100}
+                unit="%"
+                tone={toneForRisk(data.cold_risk)}
+              />
+              <CircularGauge
+                label="Dehydration Risk"
+                value={data.dehydration_risk}
+                max={100}
+                unit="%"
+                tone={toneForRisk(data.dehydration_risk)}
+              />
+              <CircularGauge
+                label="Asthma Proxy Risk"
+                value={data.asthma_proxy_risk}
+                max={100}
+                unit="%"
+                tone={toneForRisk(data.asthma_proxy_risk)}
+              />
+              <CircularGauge
+                label="Sleep Comfort"
+                value={data.sleep_comfort_index}
+                max={100}
+                unit="%"
+                tone={toneForRisk(data.sleep_comfort_index, true)}
+              />
             </div>
           </section>
 
