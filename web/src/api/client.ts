@@ -1,16 +1,17 @@
-import type { LocationSuggestion } from "../types";
+import type { LocationSuggestion, NotificationDeliveryLog, NotificationSubscription } from "../types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
-async function request<T>(path: string): Promise<T> {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
   let lastNetworkError: Error | null = null;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, init);
       if (!response.ok) {
-        throw new Error(`Request failed (${response.status})`);
+        const errorBody = await response.text();
+        throw new Error(`Request failed (${response.status})${errorBody ? `: ${errorBody}` : ""}`);
       }
       return response.json() as Promise<T>;
     } catch (error) {
@@ -61,4 +62,46 @@ export async function getAnomalies(location: string, windowDays: number) {
   return request(
     `/v1/dashboard/anomalies?location=${encodeURIComponent(location)}&window_days=${windowDays}`,
   );
+}
+
+export async function getNotificationSubscriptions() {
+  const response = await request<{ items: NotificationSubscription[] }>("/v1/notifications/subscriptions");
+  return response.items;
+}
+
+export async function upsertNotificationSubscription(payload: {
+  location_name: string;
+  channel: "email" | "telegram" | "sms";
+  destination: string;
+  enabled: boolean;
+  schedule_time: string;
+  timezone: string;
+  include_outfit: boolean;
+  include_health: boolean;
+  include_plan: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_start: string;
+  quiet_end: string;
+  escalation_enabled: boolean;
+}) {
+  return request<NotificationSubscription>("/v1/notifications/subscriptions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function sendNotificationTest(subscriptionId: number, forceSeverity: "normal" | "high" = "normal") {
+  return request<{ status: string; job_id: number; message: string }>("/v1/notifications/send-test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subscription_id: subscriptionId, force_severity: forceSeverity }),
+  });
+}
+
+export async function getNotificationDeliveryLogs(limit = 25) {
+  const response = await request<{ items: NotificationDeliveryLog[] }>(
+    `/v1/notifications/delivery-logs?limit=${encodeURIComponent(String(limit))}`,
+  );
+  return response.items;
 }

@@ -7,6 +7,7 @@ from .anomalies import detect_anomalies
 from .health import get_or_generate_health_alert
 from .ingestion import ingest_hourly_forecast
 from .location import ensure_default_location
+from .notifications import run_notification_cycle
 from .outfit import get_or_generate_outfit
 from .plan import generate_plan_windows
 
@@ -53,6 +54,12 @@ def run_hourly_pipeline(db: Session) -> dict:
         message = "Pipeline completed successfully"
         if failed_locations:
             message = f"Pipeline completed with {len(failed_locations)} location failure(s): {'; '.join(failed_locations[:3])}"
+
+        try:
+            run_notification_cycle(db)
+        except Exception:
+            # Notification processing should not fail the weather pipeline.
+            pass
 
         run.status = status
         run.finished_at = datetime.utcnow()

@@ -407,6 +407,21 @@ def list_model_versions(db: Session, limit: int = 20) -> list[ModelVersion]:
     )
 
 
+def get_inference_model_rmse(db: Session) -> float | None:
+    bundle = _get_inference_model_bundle(db)
+    if bundle is None:
+        return None
+    version, _ = bundle
+    metrics = version.metrics or {}
+    rmse_value = metrics.get("rmse")
+    if rmse_value is None:
+        return None
+    try:
+        return float(rmse_value)
+    except (TypeError, ValueError):
+        return None
+
+
 def predict_next_hour_temperature(db: Session, location_id: int) -> float | None:
     model_bundle = _get_inference_model_bundle(db)
     if model_bundle is None:

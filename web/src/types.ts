@@ -35,6 +35,40 @@ export type OverviewResponse = {
     timestamp: string;
     temperature_c: number | null;
   }[];
+  hourly_temperatures_24h_custom_model_bands?: {
+    timestamp: string;
+    temperature_c: number | null;
+    lower_c: number | null;
+    upper_c: number | null;
+  }[];
+  custom_model_rmse_c?: number | null;
+  source_comparison_next_hour?: {
+    open_meteo_next_hour_c: number | null;
+    custom_ml_next_hour_c: number | null;
+    delta_c: number | null;
+    rmse_c: number | null;
+    preferred_source: "open_meteo" | "custom_ml" | "mixed";
+    confidence_note: string;
+  } | null;
+  recommendation_details?: {
+    recommendation: string;
+    why: string;
+    source: string;
+  }[];
+  weekly_summary?: {
+    window_start: string;
+    window_end: string;
+    average_temp_c: number | null;
+    average_temp_delta_vs_prev_week_c: number | null;
+    total_precipitation_mm: number | null;
+    precipitation_delta_vs_prev_week_mm: number | null;
+    anomalies_last_7d: number;
+    anomalies_delta_vs_prev_week: number | null;
+    best_windows: string[];
+    insights: string[];
+  } | null;
+  data_freshness?: string;
+  stale_reason?: string | null;
 };
 
 export type PlanWindowItem = {
@@ -87,4 +121,39 @@ export type AnomaliesResponse = {
   location: LocationRead;
   window_days: number;
   items: AnomalyItem[];
+};
+
+export type NotificationSubscription = {
+  id: number;
+  location_name: string;
+  channel: "email" | "telegram" | "sms";
+  destination: string;
+  enabled: boolean;
+  schedule_time: string;
+  timezone: string;
+  include_outfit: boolean;
+  include_health: boolean;
+  include_plan: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_start: string;
+  quiet_end: string;
+  escalation_enabled: boolean;
+  next_run_at: string | null;
+  last_sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NotificationDeliveryLog = {
+  id: number;
+  job_id: number;
+  subscription_id: number;
+  channel: string;
+  destination: string;
+  status: string;
+  attempt_number: number;
+  response_code: number | null;
+  provider_message: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
 };

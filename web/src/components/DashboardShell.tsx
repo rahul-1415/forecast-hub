@@ -1,6 +1,11 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
-import { getLocationSuggestions } from "../api/client";
+import {
+  getLocationSuggestions,
+  getNotificationDeliveryLogs,
+  sendNotificationTest,
+  upsertNotificationSubscription,
+} from "../api/client";
 import { NumericSparkline } from "./NumericSparkline";
 import type { LocationSuggestion } from "../types";
 import { formatHourFromTimestamp, type TimeFormat } from "../utils/time";
@@ -78,6 +83,11 @@ export function DashboardShell({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showNotificationSetup, setShowNotificationSetup] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<string | null>(null);
+  const [savedNotificationSubscriptionId, setSavedNotificationSubscriptionId] = useState<number | null>(null);
+  const [notificationRequestPending, setNotificationRequestPending] = useState(false);
+  const [notificationLogs, setNotificationLogs] = useState<
+    { id: number; status: string; channel: string; destination: string; created_at: string; provider_message: string | null }[]
+  >([]);
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(() => {
     const defaults: NotificationPreferences = {
       enabled: true,
@@ -228,50 +238,75 @@ export function DashboardShell({
     setNotificationPreferences((previous) => ({ ...previous, [key]: value }));
   }
 
-  function sendTestNotification() {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const body = `${notificationPreferences.time} · ${notificationPreview || "Your daily forecast recommendation is ready."}`;
-    const encodedBody = encodeURIComponent(body);
-    const encodedSubject = encodeURIComponent(`Forecast Hub · ${notificationPreferences.location}`);
-
+  function getNotificationDestination() {
     if (notificationPreferences.channel === "email") {
-      if (!notificationPreferences.email.trim()) {
-        setNotificationStatus("Add an email address first.");
-        return;
-      }
-      window.open(
-        `mailto:${encodeURIComponent(notificationPreferences.email.trim())}?subject=${encodedSubject}&body=${encodedBody}`,
-        "_blank",
-      );
-      setNotificationStatus("Opened email draft for test notification.");
-      return;
+      return notificationPreferences.email.trim();
     }
-
     if (notificationPreferences.channel === "telegram") {
-      const handle = notificationPreferences.telegram.trim().replace(/^@/, "");
-      if (!handle) {
-        setNotificationStatus("Add a Telegram username first.");
-        return;
-      }
-      window.open(`https://t.me/${encodeURIComponent(handle)}?text=${encodedBody}`, "_blank");
-      setNotificationStatus("Opened Telegram compose link for test notification.");
-      return;
+      return notificationPreferences.telegram.trim();
     }
-
-    if (!notificationPreferences.mobile.trim()) {
-      setNotificationStatus("Add a mobile number first.");
-      return;
-    }
-    window.open(`sms:${encodeURIComponent(notificationPreferences.mobile.trim())}?body=${encodedBody}`, "_blank");
-    setNotificationStatus("Opened SMS draft for test notification.");
+    return notificationPreferences.mobile.trim();
   }
 
-  function saveNotificationPreferences() {
-    setNotificationStatus("Notification preferences saved in this browser.");
-    setShowNotificationSetup(false);
+  async function upsertNotificationSubscriptionForCurrentPreferences() {
+    const destination = getNotificationDestination();
+    if (!destination) {
+      throw new Error("Please add a valid contact for the selected channel.");
+    }
+
+    const channel = notificationPreferences.channel === "mobile" ? "sms" : notificationPreferences.channel;
+    const row = await upsertNotificationSubscription({
+      location_name: notificationPreferences.location,
+      channel,
+      destination,
+      enabled: notificationPreferences.enabled,
+      schedule_time: notificationPreferences.time,
+      timezone: notificationPreferences.timezone,
+      include_outfit: notificationPreferences.includeOutfit,
+      include_health: notificationPreferences.includeHealth,
+      include_plan: notificationPreferences.includeCommute,
+      quiet_hours_enabled: notificationPreferences.quietHoursEnabled,
+      quiet_start: notificationPreferences.quietStart,
+      quiet_end: notificationPreferences.quietEnd,
+      escalation_enabled: true,
+    });
+    setSavedNotificationSubscriptionId(row.id);
+    return row.id;
+  }
+
+  async function sendTestNotification() {
+    try {
+      setNotificationRequestPending(true);
+      setNotificationStatus(null);
+      const subscriptionId =
+        savedNotificationSubscriptionId ?? (await upsertNotificationSubscriptionForCurrentPreferences());
+      await sendNotificationTest(subscriptionId, "normal");
+      const logs = await getNotificationDeliveryLogs(10);
+      setNotificationLogs(logs);
+      setNotificationStatus("Test notification queued. Delivery logs will update after processing.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to queue test notification.";
+      setNotificationStatus(message);
+    } finally {
+      setNotificationRequestPending(false);
+    }
+  }
+
+  async function saveNotificationPreferences() {
+    try {
+      setNotificationRequestPending(true);
+      setNotificationStatus(null);
+      await upsertNotificationSubscriptionForCurrentPreferences();
+      const logs = await getNotificationDeliveryLogs(10);
+      setNotificationLogs(logs);
+      setNotificationStatus("Notification preferences saved to backend scheduler.");
+      setShowNotificationSetup(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save notification preferences.";
+      setNotificationStatus(message);
+    } finally {
+      setNotificationRequestPending(false);
+    }
   }
 
   useEffect(() => {
@@ -317,6 +352,29 @@ export function DashboardShell({
 
     window.localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(notificationPreferences));
   }, [notificationPreferences]);
+
+  useEffect(() => {
+    if (!showNotificationSetup) {
+      return;
+    }
+
+    let cancelled = false;
+    getNotificationDeliveryLogs(10)
+      .then((logs) => {
+        if (!cancelled) {
+          setNotificationLogs(logs);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNotificationLogs([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showNotificationSetup]);
 
   useEffect(() => {
     if (!locations.includes(notificationPreferences.location)) {
@@ -663,7 +721,7 @@ export function DashboardShell({
                 <span className="custom-ml-metric-value">{customMlPointCount}</span>
               </article>
             </div>
-            {customMlPointCount === 0 ? (
+            {!hourlyTemperaturesLoading && customMlPointCount === 0 ? (
               <p className="custom-ml-empty-note">
                 No loadable ML model output found. Trigger `train-model` to refresh model artifacts.
               </p>
@@ -946,12 +1004,26 @@ export function DashboardShell({
 
             {notificationStatus ? <p className="notification-status">{notificationStatus}</p> : null}
 
+            {notificationLogs.length > 0 ? (
+              <section className="notification-log-panel">
+                <p className="notification-preview-label">Recent Delivery Logs</p>
+                <ul className="notification-log-list">
+                  {notificationLogs.slice(0, 5).map((log) => (
+                    <li key={log.id}>
+                      <span>{log.channel.toUpperCase()} · {log.destination}</span>
+                      <span>{log.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
             <footer className="notification-modal-actions">
-              <button type="button" onClick={sendTestNotification}>
-                Send Test
+              <button type="button" onClick={sendTestNotification} disabled={notificationRequestPending}>
+                {notificationRequestPending ? "Queuing..." : "Send Test"}
               </button>
-              <button type="button" className="primary" onClick={saveNotificationPreferences}>
-                Save
+              <button type="button" className="primary" onClick={saveNotificationPreferences} disabled={notificationRequestPending}>
+                {notificationRequestPending ? "Saving..." : "Save"}
               </button>
             </footer>
           </section>

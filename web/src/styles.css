@@ -1379,6 +1379,27 @@ p {
   margin-bottom: 0.55rem;
 }
 
+.source-comparison-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.source-card {
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  background: var(--surface-2);
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.source-card-value {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
 .range-bar-wrap {
   display: grid;
   gap: 0.4rem;
@@ -1501,6 +1522,15 @@ p {
 
 .advice-list li {
   line-height: 1.4;
+}
+
+.mini-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.28rem;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
 }
 
 .chart-panel .chart-wrap {
@@ -1809,6 +1839,31 @@ th {
   font-size: 0.86rem;
 }
 
+.notification-log-panel {
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--surface-2);
+  padding: 0.68rem 0.72rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.notification-log-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.notification-log-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
 .notification-modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -1831,6 +1886,11 @@ th {
 .notification-modal-actions button.primary {
   border-color: var(--accent);
   background: var(--surface-3);
+}
+
+.notification-modal-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .loading-panel {

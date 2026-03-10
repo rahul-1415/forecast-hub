@@ -36,10 +36,7 @@ export default function App() {
     const saved = window.localStorage.getItem("fh_theme_mode");
     return saved === "light" ? "light" : "dark";
   });
-  const [predictionSource, setPredictionSource] = useState<PredictionSource>(() => {
-    const saved = window.localStorage.getItem("fh_prediction_source");
-    return saved === "custom_ml" ? "custom_ml" : "open_meteo";
-  });
+  const [predictionSource, setPredictionSource] = useState<PredictionSource>("open_meteo");
   const [timeFormat, setTimeFormat] = useState<TimeFormat>(() => {
     const saved = window.localStorage.getItem("fh_time_format");
     return saved === "24h" ? "24h" : "12h";
@@ -168,10 +165,6 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", themeMode);
     window.localStorage.setItem("fh_theme_mode", themeMode);
   }, [themeMode]);
-
-  useEffect(() => {
-    window.localStorage.setItem("fh_prediction_source", predictionSource);
-  }, [predictionSource]);
 
   useEffect(() => {
     window.localStorage.setItem("fh_time_format", timeFormat);

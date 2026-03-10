@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     open_meteo_base_url: str = "https://api.open-meteo.com/v1/forecast"
     open_meteo_geocoding_url: str = "https://geocoding-api.open-meteo.com/v1/search"
     request_timeout_seconds: int = 20
+    open_meteo_cache_ttl_seconds: int = 900
+    open_meteo_cache_stale_ttl_seconds: int = 21600
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
@@ -29,6 +31,30 @@ class Settings(BaseSettings):
 
     model_min_training_rows: int = 200
     model_promote_rmse_margin: float = 0.995
+
+    notification_scheduler_enabled: bool = True
+    notification_scheduler_interval_seconds: int = 60
+    notification_job_batch_size: int = 20
+    notification_max_retries: int = 3
+    notification_retry_backoff_seconds: str = "60,300,900"
+
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
+    smtp_use_tls: bool = True
+
+    telegram_bot_token: str | None = None
+
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_from_number: str | None = None
+
+    severe_risk_threshold: int = 70
+    severe_precip_threshold_mm: float = 25.0
+    severe_wind_threshold_kph: float = 50.0
+    severe_escalation_cooldown_minutes: int = 240
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -49,6 +75,19 @@ class Settings(BaseSettings):
         if url.startswith("postgresql://"):
             return f"postgresql+psycopg://{url.removeprefix('postgresql://')}"
         return url
+
+    @property
+    def notification_retry_backoff(self) -> list[int]:
+        values: list[int] = []
+        for item in self.notification_retry_backoff_seconds.split(","):
+            parsed = item.strip()
+            if not parsed:
+                continue
+            try:
+                values.append(max(1, int(parsed)))
+            except ValueError:
+                continue
+        return values or [60, 300, 900]
 
 
 settings = Settings()

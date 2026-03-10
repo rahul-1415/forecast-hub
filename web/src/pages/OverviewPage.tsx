@@ -15,6 +15,9 @@ type OverviewPageProps = {
 export function OverviewPage({ data, loading, error, predictionSource, timeFormat }: OverviewPageProps) {
   const currentTemperature = data?.current_temperature_c ?? null;
   const suggestionsTitle = predictionSource === "custom_ml" ? "AI Suggestions (Custom ML)" : "AI Suggestions";
+  const sourceComparison = data?.source_comparison_next_hour ?? null;
+  const weeklySummary = data?.weekly_summary ?? null;
+  const modelRmse = data?.custom_model_rmse_c ?? null;
   const nextHourReference =
     predictionSource === "custom_ml"
       ? (data?.next_hour_temperature_custom_model_c ?? data?.next_hour_temperature_prediction_c ?? null)
@@ -104,6 +107,41 @@ export function OverviewPage({ data, loading, error, predictionSource, timeForma
           </div>
 
           <section className="panel">
+            <h3>Confidence & Source Comparison</h3>
+            <div className="source-comparison-grid">
+              <article className="source-card">
+                <p className="visual-card-title">Open-Meteo Next Hour</p>
+                <p className="source-card-value">
+                  {sourceComparison?.open_meteo_next_hour_c != null
+                    ? `${sourceComparison.open_meteo_next_hour_c.toFixed(1)} C`
+                    : "-"}
+                </p>
+              </article>
+              <article className="source-card">
+                <p className="visual-card-title">Custom ML Next Hour</p>
+                <p className="source-card-value">
+                  {sourceComparison?.custom_ml_next_hour_c != null
+                    ? `${sourceComparison.custom_ml_next_hour_c.toFixed(1)} C`
+                    : "-"}
+                </p>
+              </article>
+              <article className="source-card">
+                <p className="visual-card-title">Model Confidence Band</p>
+                <p className="source-card-value">
+                  {sourceComparison?.custom_ml_next_hour_c != null && modelRmse != null
+                    ? `${(sourceComparison.custom_ml_next_hour_c - modelRmse).toFixed(1)} to ${(sourceComparison.custom_ml_next_hour_c + modelRmse).toFixed(1)} C`
+                    : "Unavailable"}
+                </p>
+              </article>
+              <article className="source-card">
+                <p className="visual-card-title">Preferred Source</p>
+                <p className="source-card-value">{sourceComparison?.preferred_source ?? "mixed"}</p>
+                <p className="panel-source-note">{sourceComparison?.confidence_note ?? "No confidence note available."}</p>
+              </article>
+            </div>
+          </section>
+
+          <section className="panel">
             <h3>Visual Snapshot</h3>
             <div className="overview-visual-grid">
               <article className="visual-card">
@@ -155,6 +193,76 @@ export function OverviewPage({ data, loading, error, predictionSource, timeForma
               ))}
             </ul>
           </section>
+
+          <section className="panel">
+            <h3>Why These Recommendations</h3>
+            <ul className="advice-list">
+              {(data.recommendation_details ?? []).map((detail, index) => (
+                <li key={`${detail.source}-${index}`}>
+                  <strong>{detail.recommendation}</strong>
+                  <br />
+                  <span className="panel-source-note">{detail.why}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {weeklySummary ? (
+            <section className="panel">
+              <h3>Weekly Summary & Trends</h3>
+              <div className="source-comparison-grid">
+                <article className="source-card">
+                  <p className="visual-card-title">Average Temp (7d)</p>
+                  <p className="source-card-value">
+                    {weeklySummary.average_temp_c != null ? `${weeklySummary.average_temp_c.toFixed(1)} C` : "-"}
+                  </p>
+                  <p className="panel-source-note">
+                    Delta vs prev week:{" "}
+                    {weeklySummary.average_temp_delta_vs_prev_week_c != null
+                      ? `${weeklySummary.average_temp_delta_vs_prev_week_c.toFixed(1)} C`
+                      : "-"}
+                  </p>
+                </article>
+                <article className="source-card">
+                  <p className="visual-card-title">Total Rain (7d)</p>
+                  <p className="source-card-value">
+                    {weeklySummary.total_precipitation_mm != null
+                      ? `${weeklySummary.total_precipitation_mm.toFixed(1)} mm`
+                      : "-"}
+                  </p>
+                  <p className="panel-source-note">
+                    Delta vs prev week:{" "}
+                    {weeklySummary.precipitation_delta_vs_prev_week_mm != null
+                      ? `${weeklySummary.precipitation_delta_vs_prev_week_mm.toFixed(1)} mm`
+                      : "-"}
+                  </p>
+                </article>
+                <article className="source-card">
+                  <p className="visual-card-title">Anomalies (7d)</p>
+                  <p className="source-card-value">{weeklySummary.anomalies_last_7d}</p>
+                  <p className="panel-source-note">
+                    Delta vs prev week:{" "}
+                    {weeklySummary.anomalies_delta_vs_prev_week != null
+                      ? `${weeklySummary.anomalies_delta_vs_prev_week}`
+                      : "-"}
+                  </p>
+                </article>
+                <article className="source-card">
+                  <p className="visual-card-title">Best Windows</p>
+                  <ul className="mini-list">
+                    {weeklySummary.best_windows.map((windowItem) => (
+                      <li key={windowItem}>{windowItem}</li>
+                    ))}
+                  </ul>
+                </article>
+              </div>
+              <ul className="advice-list">
+                {weeklySummary.insights.map((insight) => (
+                  <li key={insight}>{insight}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
         </>
       ) : null}
     </section>

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import threading
 import time
 
 import httpx
@@ -21,6 +22,9 @@ HOURLY_FIELDS = {
     "is_day": "is_day",
 }
 
+_forecast_cache_lock = threading.Lock()
+_forecast_cache: dict[str, tuple[datetime, dict]] = {}
+
 
 def _parse_timestamp(timestamp: str) -> datetime:
     parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
@@ -30,6 +34,16 @@ def _parse_timestamp(timestamp: str) -> datetime:
 
 
 def fetch_hourly_forecast(location: Location) -> dict:
+    cache_key = f"{location.latitude:.4f}:{location.longitude:.4f}:{location.timezone}"
+    now = datetime.utcnow()
+    with _forecast_cache_lock:
+        cached = _forecast_cache.get(cache_key)
+    if cached:
+        cached_at, cached_payload = cached
+        age_seconds = (now - cached_at).total_seconds()
+        if age_seconds <= settings.open_meteo_cache_ttl_seconds:
+            return cached_payload
+
     params = {
         "latitude": location.latitude,
         "longitude": location.longitude,
@@ -45,13 +59,24 @@ def fetch_hourly_forecast(location: Location) -> dict:
             with httpx.Client(timeout=settings.request_timeout_seconds) as client:
                 response = client.get(settings.open_meteo_base_url, params=params)
                 response.raise_for_status()
-                return response.json()
+                payload = response.json()
+                with _forecast_cache_lock:
+                    _forecast_cache[cache_key] = (datetime.utcnow(), payload)
+                return payload
         except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
             last_error = exc
             if attempt == max_attempts:
                 break
             # Brief linear backoff to absorb transient network/upstream issues.
             time.sleep(attempt)
+
+    with _forecast_cache_lock:
+        cached = _forecast_cache.get(cache_key)
+    if cached:
+        cached_at, cached_payload = cached
+        age_seconds = (datetime.utcnow() - cached_at).total_seconds()
+        if age_seconds <= settings.open_meteo_cache_stale_ttl_seconds:
+            return cached_payload
 
     raise RuntimeError(f"Open-Meteo request failed after {max_attempts} attempts") from last_error
 

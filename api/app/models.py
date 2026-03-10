@@ -165,3 +165,90 @@ class ModelArtifact(Base):
     artifact_format: Mapped[str] = mapped_column(String(32), default="joblib")
     artifact_bytes: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+
+
+class NotificationSubscription(Base):
+    __tablename__ = "notification_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("channel", "destination", "location_name", name="uq_notification_subscription_target"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    location_name: Mapped[str] = mapped_column(String(120), index=True)
+    channel: Mapped[str] = mapped_column(String(24), index=True)
+    destination: Mapped[str] = mapped_column(String(255), index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    schedule_time: Mapped[str] = mapped_column(String(5), default="08:00")
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    include_outfit: Mapped[bool] = mapped_column(Boolean, default=True)
+    include_health: Mapped[bool] = mapped_column(Boolean, default=True)
+    include_plan: Mapped[bool] = mapped_column(Boolean, default=True)
+    quiet_hours_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    quiet_start: Mapped[str] = mapped_column(String(5), default="22:00")
+    quiet_end: Mapped[str] = mapped_column(String(5), default="07:00")
+    escalation_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True, index=True)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class NotificationJob(Base):
+    __tablename__ = "notification_jobs"
+    __table_args__ = (
+        UniqueConstraint("subscription_id", "dedupe_key", name="uq_notification_job_dedupe"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    subscription_id: Mapped[int] = mapped_column(
+        ForeignKey("notification_subscriptions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    severity: Mapped[str] = mapped_column(String(16), default="normal", index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=4)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), index=True)
+    dedupe_key: Mapped[str] = mapped_column(String(200))
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class NotificationDeliveryLog(Base):
+    __tablename__ = "notification_delivery_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("notification_jobs.id", ondelete="CASCADE"), index=True)
+    subscription_id: Mapped[int] = mapped_column(
+        ForeignKey("notification_subscriptions.id", ondelete="CASCADE"),
+        index=True,
+    )
+    channel: Mapped[str] = mapped_column(String(24), index=True)
+    destination: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    response_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    provider_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+
+
+class SevereWeatherEvent(Base):
+    __tablename__ = "severe_weather_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    location_id: Mapped[int] = mapped_column(ForeignKey("locations.id", ondelete="CASCADE"), index=True)
+    severity: Mapped[str] = mapped_column(String(16), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), index=True)

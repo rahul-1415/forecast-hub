@@ -38,6 +38,17 @@ def get_hours_between(db: Session, location_id: int, start: datetime, end: datet
     )
 
 
+def get_latest_hours(db: Session, location_id: int, limit: int = 24) -> list[HourlyWeather]:
+    rows = (
+        db.query(HourlyWeather)
+        .filter(HourlyWeather.location_id == location_id)
+        .order_by(HourlyWeather.timestamp.desc())
+        .limit(limit)
+        .all()
+    )
+    return sorted(rows, key=lambda row: row.timestamp)
+
+
 def safe_mean(values: list[float | None]) -> float | None:
     cleaned = [v for v in values if v is not None]
     if not cleaned:
