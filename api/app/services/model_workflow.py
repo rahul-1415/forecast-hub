@@ -2,14 +2,11 @@ from datetime import datetime
 from functools import lru_cache
 import io
 import logging
+import math
+from typing import Any
 import uuid
 
 import joblib
-import mlflow
-import mlflow.sklearn
-import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -33,7 +30,31 @@ logger = logging.getLogger(__name__)
 _model_object_cache: dict[int, object] = {}
 
 
-def _to_frame(rows: list[HourlyWeather]) -> pd.DataFrame:
+@lru_cache(maxsize=1)
+def _import_pandas():
+    import pandas as pd
+
+    return pd
+
+
+@lru_cache(maxsize=1)
+def _import_sklearn_modules():
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+    return RandomForestRegressor, mean_absolute_error, mean_squared_error, r2_score
+
+
+@lru_cache(maxsize=1)
+def _import_mlflow_modules():
+    import mlflow
+    import mlflow.sklearn as mlflow_sklearn
+
+    return mlflow, mlflow_sklearn
+
+
+def _to_frame(rows: list[HourlyWeather]):
+    pd = _import_pandas()
     payload = [
         {
             "location_id": row.location_id,
@@ -62,7 +83,7 @@ def _to_frame(rows: list[HourlyWeather]) -> pd.DataFrame:
     return frame
 
 
-def _prepare_dataset(db: Session) -> pd.DataFrame:
+def _prepare_dataset(db: Session):
     rows = (
         db.query(HourlyWeather)
         .filter(HourlyWeather.temperature_c.isnot(None))
@@ -78,7 +99,8 @@ def _prepare_dataset(db: Session) -> pd.DataFrame:
     return frame
 
 
-def _build_feature_defaults(frame: pd.DataFrame) -> dict[str, float]:
+def _build_feature_defaults(frame: Any) -> dict[str, float]:
+    pd = _import_pandas()
     defaults: dict[str, float] = {}
     for column in FEATURE_COLUMNS:
         median = frame[column].median(skipna=True)
@@ -98,15 +120,21 @@ def get_active_model_version(db: Session) -> ModelVersion | None:
     )
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=1)
 def _load_model_cached(model_uri: str, tracking_uri: str):
+    mlflow, mlflow_sklearn = _import_mlflow_modules()
     mlflow.set_tracking_uri(tracking_uri)
-    return mlflow.sklearn.load_model(model_uri)
+    return mlflow_sklearn.load_model(model_uri)
 
 
 def _clear_inference_caches() -> None:
     _load_model_cached.cache_clear()
     _model_object_cache.clear()
+
+
+def _set_model_cache(version_id: int, model: object) -> None:
+    _model_object_cache.clear()
+    _model_object_cache[version_id] = model
 
 
 def _serialize_model(model: object) -> bytes:
@@ -153,7 +181,7 @@ def _load_model_for_version(db: Session, version: ModelVersion) -> object | None
     if artifact is not None:
         try:
             model = _deserialize_model(artifact.artifact_bytes)
-            _model_object_cache[version.id] = model
+            _set_model_cache(version.id, model)
             return model
         except Exception as exc:
             logger.warning(
@@ -164,7 +192,7 @@ def _load_model_for_version(db: Session, version: ModelVersion) -> object | None
 
     try:
         model = _load_model_cached(version.model_uri, settings.mlflow_tracking_uri)
-        _model_object_cache[version.id] = model
+        _set_model_cache(version.id, model)
         return model
     except Exception:
         _load_model_cached.cache_clear()
@@ -302,11 +330,13 @@ def train_temperature_model(db: Session) -> dict:
         x_test = test_frame[FEATURE_COLUMNS].fillna(defaults)
         y_test = test_frame[TARGET_COLUMN]
 
+        RandomForestRegressor, mean_absolute_error, mean_squared_error, r2_score = _import_sklearn_modules()
         model = RandomForestRegressor(
-            n_estimators=300,
+            n_estimators=settings.model_rf_n_estimators,
             random_state=42,
-            min_samples_leaf=2,
-            n_jobs=-1,
+            min_samples_leaf=settings.model_rf_min_samples_leaf,
+            max_depth=settings.model_rf_max_depth,
+            n_jobs=settings.model_rf_n_jobs,
         )
         model.fit(x_train, y_train)
         preds = model.predict(x_test)
@@ -317,8 +347,10 @@ def train_temperature_model(db: Session) -> dict:
 
         params = {
             "model_type": "RandomForestRegressor",
-            "n_estimators": 300,
-            "min_samples_leaf": 2,
+            "n_estimators": settings.model_rf_n_estimators,
+            "min_samples_leaf": settings.model_rf_min_samples_leaf,
+            "max_depth": settings.model_rf_max_depth,
+            "n_jobs": settings.model_rf_n_jobs,
             "feature_defaults": defaults,
             "rows_train": int(len(train_frame)),
             "rows_test": int(len(test_frame)),
@@ -334,6 +366,7 @@ def train_temperature_model(db: Session) -> dict:
         run_id = uuid.uuid4().hex
         model_uri = f"db://model_versions/{run_id}"
         try:
+            mlflow, mlflow_sklearn = _import_mlflow_modules()
             mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
             mlflow.set_experiment(settings.mlflow_experiment_name)
 
@@ -350,7 +383,7 @@ def train_temperature_model(db: Session) -> dict:
                 mlflow.log_metrics(metrics)
                 mlflow.log_dict(defaults, artifact_file="feature_defaults.json")
                 mlflow.log_dict({"feature_columns": FEATURE_COLUMNS}, artifact_file="feature_columns.json")
-                mlflow.sklearn.log_model(model, artifact_path="model")
+                mlflow_sklearn.log_model(model, artifact_path="model")
 
                 run_id = run.info.run_id
                 model_uri = f"runs:/{run_id}/model"
@@ -422,6 +455,37 @@ def get_inference_model_rmse(db: Session) -> float | None:
         return None
 
 
+def _coerce_feature_value(raw_value: object, default: float) -> float:
+    if raw_value is None:
+        return default
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(parsed) or math.isinf(parsed):
+        return default
+    return parsed
+
+
+def _build_feature_row_from_weather(row: HourlyWeather, defaults: dict[str, float]) -> list[float]:
+    payload = {
+        "hour": row.timestamp.hour,
+        "day_of_year": row.timestamp.timetuple().tm_yday,
+        "is_weekend": 1 if row.timestamp.weekday() >= 5 else 0,
+        "temperature_c": row.temperature_c,
+        "apparent_temperature_c": row.apparent_temperature_c,
+        "precipitation_mm": row.precipitation_mm,
+        "relative_humidity": row.relative_humidity,
+        "wind_speed_kph": row.wind_speed_kph,
+        "pressure_hpa": row.pressure_hpa,
+        "cloud_cover": row.cloud_cover,
+    }
+    return [
+        _coerce_feature_value(payload.get(column), defaults.get(column, 0.0))
+        for column in FEATURE_COLUMNS
+    ]
+
+
 def predict_next_hour_temperature(db: Session, location_id: int) -> float | None:
     model_bundle = _get_inference_model_bundle(db)
     if model_bundle is None:
@@ -439,39 +503,15 @@ def predict_next_hour_temperature(db: Session, location_id: int) -> float | None
 
     base_defaults = _build_inference_feature_defaults(active)
 
-    frame = pd.DataFrame(
-        [
-            {
-                "hour": latest.timestamp.hour,
-                "day_of_year": latest.timestamp.timetuple().tm_yday,
-                "is_weekend": 1 if latest.timestamp.weekday() >= 5 else 0,
-                "temperature_c": latest.temperature_c,
-                "apparent_temperature_c": latest.apparent_temperature_c,
-                "precipitation_mm": latest.precipitation_mm,
-                "relative_humidity": latest.relative_humidity,
-                "wind_speed_kph": latest.wind_speed_kph,
-                "pressure_hpa": latest.pressure_hpa,
-                "cloud_cover": latest.cloud_cover,
-            }
-        ]
-    )
-
-    frame = frame.reindex(columns=FEATURE_COLUMNS)
-    for column in FEATURE_COLUMNS:
-        frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame = frame.fillna(base_defaults)
-    if frame[FEATURE_COLUMNS].isnull().any().any():
-        logger.warning("Unable to infer next-hour temperature due to unresolved null features for location_id=%s", location_id)
-        return None
-
     try:
-        prediction = model.predict(frame[FEATURE_COLUMNS])[0]
+        features = _build_feature_row_from_weather(latest, base_defaults)
+        prediction = model.predict([features])[0]
         return float(prediction)
     except Exception as exc:
         # Active model metadata can drift from local MLflow artifacts across environments.
         # Fail soft so overview endpoints keep working even when model artifacts are unavailable.
         logger.exception("Custom model prediction failed for location_id=%s: %s", location_id, exc)
-        _model_object_cache.pop(active.id, None)
+        _model_object_cache.clear()
         _load_model_cached.cache_clear()
         return None
 
@@ -489,37 +529,12 @@ def predict_hourly_temperature_series(
 
     base_defaults = _build_inference_feature_defaults(active)
 
-    frame = pd.DataFrame(
-        [
-            {
-                "hour": row.timestamp.hour,
-                "day_of_year": row.timestamp.timetuple().tm_yday,
-                "is_weekend": 1 if row.timestamp.weekday() >= 5 else 0,
-                "temperature_c": row.temperature_c,
-                "apparent_temperature_c": row.apparent_temperature_c,
-                "precipitation_mm": row.precipitation_mm,
-                "relative_humidity": row.relative_humidity,
-                "wind_speed_kph": row.wind_speed_kph,
-                "pressure_hpa": row.pressure_hpa,
-                "cloud_cover": row.cloud_cover,
-            }
-            for row in rows
-        ]
-    )
-
-    frame = frame.reindex(columns=FEATURE_COLUMNS)
-    for column in FEATURE_COLUMNS:
-        frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame = frame.fillna(base_defaults)
-    if frame[FEATURE_COLUMNS].isnull().any().any():
-        logger.warning("Unable to infer hourly custom series due to unresolved null features for %s rows", len(rows))
-        return [None] * len(rows)
-
     try:
-        predictions = model.predict(frame[FEATURE_COLUMNS])
+        feature_rows = [_build_feature_row_from_weather(row, base_defaults) for row in rows]
+        predictions = model.predict(feature_rows)
         return [float(value) for value in predictions]
     except Exception as exc:
         logger.exception("Custom model hourly series prediction failed: %s", exc)
-        _model_object_cache.pop(active.id, None)
+        _model_object_cache.clear()
         _load_model_cached.cache_clear()
         return [None] * len(rows)
