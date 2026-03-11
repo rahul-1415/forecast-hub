@@ -13,6 +13,17 @@ if [[ -z "${SOURCE_DB_URL}" || -z "${TARGET_DB_URL}" ]]; then
   exit 1
 fi
 
+if [[ "${SOURCE_DB_URL}" != postgres://* && "${SOURCE_DB_URL}" != postgresql://* ]]; then
+  echo "SOURCE_DATABASE_URL must be a postgres connection string."
+  exit 1
+fi
+
+if [[ "${TARGET_DB_URL}" != postgres://* && "${TARGET_DB_URL}" != postgresql://* ]]; then
+  echo "SUPABASE_DATABASE_URL must be a postgres connection string."
+  echo "Do not use the dashboard URL (https://<project>.supabase.co)."
+  exit 1
+fi
+
 for tool in pg_dump pg_restore psql; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
     echo "Missing required tool: ${tool}"
