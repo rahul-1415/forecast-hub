@@ -1,4 +1,5 @@
 import logging
+import re
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,11 +25,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.state.db_ready = False
+app.state.db_init_error = None
+app.state.db_target = None
+
+
+def _redact_db_url(url: str) -> str:
+    # Hide credentials in URLs like postgresql://user:password@host/db
+    return re.sub(r"(postgres(?:ql)?(?:\+psycopg)?://[^:]+:)([^@]+)(@)", r"\1***\3", url)
 
 
 @app.on_event("startup")
 def startup() -> None:
     db_ready = False
+    app.state.db_init_error = None
+    app.state.db_target = _redact_db_url(settings.sqlalchemy_database_url)
     try:
         Base.metadata.create_all(bind=engine)
         db = SessionLocal()
@@ -40,6 +50,7 @@ def startup() -> None:
     except Exception as exc:
         # Do not crash process on transient DB outages/quota blocks; keep service alive.
         logger.exception("Database initialization failed during startup: %s", exc)
+        app.state.db_init_error = str(exc)
 
     app.state.db_ready = db_ready
     if db_ready:
