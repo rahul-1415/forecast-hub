@@ -37,10 +37,12 @@ class Settings(BaseSettings):
     mlflow_model_name: str = "forecast_hub_next_hour_temperature"
 
     model_min_training_rows: int = 200
+    model_bootstrap_min_rows: int = 72
+    model_training_max_rows: int = 5000
     model_promote_rmse_margin: float = 0.995
-    model_rf_n_estimators: int = 80
+    model_rf_n_estimators: int = 30
     model_rf_min_samples_leaf: int = 2
-    model_rf_max_depth: int | None = 12
+    model_rf_max_depth: int | None = 10
     model_rf_n_jobs: int = 1
 
     notification_scheduler_enabled: bool = True

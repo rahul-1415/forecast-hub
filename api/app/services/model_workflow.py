@@ -87,9 +87,11 @@ def _prepare_dataset(db: Session):
     rows = (
         db.query(HourlyWeather)
         .filter(HourlyWeather.temperature_c.isnot(None))
-        .order_by(HourlyWeather.timestamp.asc())
+        .order_by(HourlyWeather.timestamp.desc())
+        .limit(settings.model_training_max_rows)
         .all()
     )
+    rows.reverse()
 
     frame = _to_frame(rows)
     if frame.empty:
@@ -314,12 +316,30 @@ def train_temperature_model(db: Session) -> dict:
 
     try:
         frame = _prepare_dataset(db)
-        if frame.empty or len(frame) < settings.model_min_training_rows:
-            raise ValueError(
-                f"Not enough data to train model (required >= {settings.model_min_training_rows}, got {len(frame)})"
+        total_rows = int(len(frame))
+        if frame.empty:
+            raise ValueError("No weather rows available to train model")
+
+        if total_rows < settings.model_min_training_rows:
+            if total_rows < settings.model_bootstrap_min_rows:
+                raise ValueError(
+                    "Not enough data to train model "
+                    f"(required >= {settings.model_bootstrap_min_rows} for bootstrap mode, got {total_rows})"
+                )
+            logger.warning(
+                "Bootstrapping model with %s rows below configured minimum %s",
+                total_rows,
+                settings.model_min_training_rows,
             )
 
-        split_idx = int(len(frame) * 0.8)
+        if total_rows < 8:
+            raise ValueError(
+                f"Not enough data to train model split (need >= 8 rows, got {total_rows})"
+            )
+
+        split_idx = int(total_rows * 0.8)
+        if split_idx < 1 or split_idx >= total_rows:
+            split_idx = max(1, min(total_rows - 1, split_idx))
         train_frame = frame.iloc[:split_idx].copy()
         test_frame = frame.iloc[split_idx:].copy()
 

@@ -156,6 +156,42 @@ def _format_subscription_details(subscription: NotificationSubscription) -> str:
     )
 
 
+def _format_message_section(title: str, entries: list[str]) -> str:
+    cleaned = [entry.strip() for entry in entries if entry and entry.strip()]
+    if not cleaned:
+        return ""
+    bullets = "\n".join([f"- {entry}" for entry in cleaned])
+    return f"{title}\n{bullets}"
+
+
+def _fallback_wear_tip(current_temp: float | None) -> str:
+    if current_temp is None:
+        return "Wear comfortable layers and check live conditions before heading out."
+    if current_temp <= 5:
+        return "Wear a warm jacket with an extra insulating layer."
+    if current_temp <= 16:
+        return "Wear light layers or a hoodie for comfort."
+    if current_temp <= 28:
+        return "Wear breathable daywear with one optional outer layer."
+    return "Wear lightweight clothing and stay hydrated."
+
+
+def _fallback_shoe_tip(precip_total: float, current_temp: float | None) -> str:
+    if precip_total >= 4:
+        return "Water-resistant shoes"
+    if current_temp is not None and current_temp <= 5:
+        return "Closed, warm shoes"
+    return "Comfortable sneakers"
+
+
+def _fallback_sunscreen_tip(max_uv: float) -> str:
+    if max_uv >= 6:
+        return "Required (SPF 30+)"
+    if max_uv >= 3:
+        return "Recommended (SPF 15+)"
+    return "Optional"
+
+
 def _telegram_settings_help_text() -> str:
     return (
         "Telegram controls:\n"
@@ -196,32 +232,42 @@ def _build_connect_sample_payload(db: Session, subscription: NotificationSubscri
     next_hour_temp = hours[1].temperature_c if len(hours) > 1 else current_temp
     precipitation_total = sum((h.precipitation_mm or 0.0) for h in hours)
     max_wind = max((h.wind_speed_kph or 0.0) for h in hours)
+    max_uv = max((h.uv_index or 0.0) for h in hours)
+    outfit = get_or_generate_outfit(db, location.id, now.date())
 
-    tip_chunks: list[str] = []
-    if current_temp is not None:
-        if current_temp <= 5:
-            tip_chunks.append("wear warm layers")
-        elif current_temp >= 30:
-            tip_chunks.append("choose lightweight clothes and hydrate early")
-        else:
-            tip_chunks.append("a light layer should be comfortable")
-    if precipitation_total >= 4:
-        tip_chunks.append("carry an umbrella")
-    if max_wind >= 28:
-        tip_chunks.append("use wind-resistant outerwear")
-    if not tip_chunks:
-        tip_chunks.append("conditions look stable, so keep your usual outfit")
-
-    now_text = f"{current_temp:.1f} C" if current_temp is not None else "n/a"
-    next_text = f"{next_hour_temp:.1f} C" if next_hour_temp is not None else "n/a"
-    summary = (
-        f"{location.name}: now {now_text}, next hour {next_text}, "
-        f"24h precipitation {precipitation_total:.1f} mm, max wind {max_wind:.1f} kph."
+    wear_line = outfit.summary if outfit else _fallback_wear_tip(current_temp)
+    umbrella_line = (
+        "Yes" if outfit and outfit.umbrella else ("Yes" if precipitation_total >= 4 else "No")
     )
-    suggestion = "Sample suggestion: " + ", ".join(tip_chunks) + "."
+    shoes_line = outfit.shoes if outfit else _fallback_shoe_tip(precipitation_total, current_temp)
+    sunscreen_line = outfit.sunscreen if outfit else _fallback_sunscreen_tip(max_uv)
+
+    sections = [
+        _format_message_section(
+            "What to Wear",
+            [
+                wear_line,
+                f"Umbrella: {umbrella_line}",
+                f"Shoes: {shoes_line}",
+                f"Sunscreen: {sunscreen_line}",
+            ],
+        ),
+        _format_message_section(
+            "Detailed Forecast",
+            [
+                f"Location: {location.name}",
+                f"Now: {current_temp:.1f} C" if current_temp is not None else "Now: n/a",
+                f"Next hour: {next_hour_temp:.1f} C" if next_hour_temp is not None else "Next hour: n/a",
+                f"24h precipitation: {precipitation_total:.1f} mm",
+                f"Max wind: {max_wind:.1f} kph",
+                f"Max UV: {max_uv:.1f}",
+            ],
+        ),
+        _format_message_section("Subscription", [details]),
+    ]
     return {
         "title": f"Sample Weather Suggestion · {location.name}",
-        "body": f"{summary} {suggestion} {details}",
+        "body": "\n\n".join([section for section in sections if section]),
     }
 
 
@@ -971,44 +1017,71 @@ def _build_daily_payload(db: Session, subscription: NotificationSubscription, se
     next_hour_temp = hours[1].temperature_c if len(hours) > 1 else current_temp
     precip_total = sum((h.precipitation_mm or 0.0) for h in hours)
     max_wind = max((h.wind_speed_kph or 0.0) for h in hours)
+    max_uv = max((h.uv_index or 0.0) for h in hours)
 
     today = now.date()
-    lines = [
-        f"{location.name}: now {current_temp:.1f} C, next hour {next_hour_temp:.1f} C."
-        if current_temp is not None and next_hour_temp is not None
-        else f"{location.name}: latest forecast refreshed.",
-        f"24h precipitation {precip_total:.1f} mm, max wind {max_wind:.1f} kph.",
+    sections: list[str] = []
+
+    outfit = get_or_generate_outfit(db, location.id, today)
+    wear_line = outfit.summary if outfit else _fallback_wear_tip(current_temp)
+    umbrella_line = "Yes" if outfit and outfit.umbrella else ("Yes" if precip_total >= 4 else "No")
+    shoes_line = outfit.shoes if outfit else _fallback_shoe_tip(precip_total, current_temp)
+    sunscreen_line = outfit.sunscreen if outfit else _fallback_sunscreen_tip(max_uv)
+    sections.append(
+        _format_message_section(
+            "What to Wear",
+            [
+                wear_line,
+                f"Umbrella: {umbrella_line}",
+                f"Shoes: {shoes_line}",
+                f"Sunscreen: {sunscreen_line}",
+            ],
+        )
+    )
+
+    weather_entries = [
+        f"Location: {location.name}",
+        f"Now: {current_temp:.1f} C" if current_temp is not None else "Now: n/a",
+        f"Next hour: {next_hour_temp:.1f} C" if next_hour_temp is not None else "Next hour: n/a",
+        f"24h precipitation: {precip_total:.1f} mm",
+        f"Max wind: {max_wind:.1f} kph",
+        f"Max UV: {max_uv:.1f}",
     ]
+    sections.append(_format_message_section("Detailed Forecast", weather_entries))
 
     if subscription.include_plan:
         plan_rows = get_plan_windows(db, location.id, today)
         if plan_rows:
             top = sorted(plan_rows, key=lambda row: row.score, reverse=True)[:2]
-            lines.append(
-                "Best windows: "
-                + "; ".join([f"{row.category} around {row.best_hour:02d}:00 ({row.score:.0f}/100)" for row in top])
-                + "."
+            sections.append(
+                _format_message_section(
+                    "Plan Windows",
+                    [f"{row.category.title()}: around {row.best_hour:02d}:00 ({row.score:.0f}/100)" for row in top],
+                )
             )
-
-    if subscription.include_outfit:
-        outfit = get_or_generate_outfit(db, location.id, today)
-        if outfit:
-            lines.append(f"Outfit: {outfit.summary}")
 
     if subscription.include_health:
         health = get_or_generate_health_alert(db, location.id, today)
         if health:
-            lines.append(
-                f"Health: heat {health.heat_risk}/100, dehydration {health.dehydration_risk}/100, asthma {health.asthma_proxy_risk}/100."
+            sections.append(
+                _format_message_section(
+                    "Health Risks",
+                    [
+                        f"Heat: {health.heat_risk}/100",
+                        f"Dehydration: {health.dehydration_risk}/100",
+                        f"Asthma proxy: {health.asthma_proxy_risk}/100",
+                    ],
+                )
             )
 
     title = f"Forecast Hub Daily Brief · {location.name}"
     if severity == "high":
         title = f"Severe Weather Alert · {location.name}"
         if reason:
-            lines.insert(0, f"High-risk condition detected: {reason}")
+            sections.insert(1, _format_message_section("Alert", [f"High-risk condition detected: {reason}"]))
 
-    return {"title": title, "body": " ".join(lines)}
+    body = "\n\n".join([section for section in sections if section])
+    return {"title": title, "body": body}
 
 
 def list_subscriptions(db: Session) -> list[NotificationSubscription]:
