@@ -43,7 +43,14 @@ def _geocode_search(name: str, count: int) -> list[dict]:
             response.raise_for_status()
             payload = response.json()
     except Exception:
-        return []
+        try:
+            transport = httpx.HTTPTransport(local_address="0.0.0.0")
+            with httpx.Client(timeout=settings.request_timeout_seconds, transport=transport) as client:
+                response = client.get(settings.open_meteo_geocoding_url, params=params)
+                response.raise_for_status()
+                payload = response.json()
+        except Exception:
+            return []
 
     results = payload.get("results") or []
     return [result for result in results if isinstance(result, dict)]

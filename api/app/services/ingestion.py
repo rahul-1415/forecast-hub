@@ -33,6 +33,24 @@ def _parse_timestamp(timestamp: str) -> datetime:
     return parsed
 
 
+def _request_open_meteo_json(url: str, params: dict) -> dict:
+    with httpx.Client(timeout=settings.request_timeout_seconds) as client:
+        response = client.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
+
+
+def _request_open_meteo_json_ipv4_fallback(url: str, params: dict) -> dict:
+    try:
+        return _request_open_meteo_json(url, params)
+    except (httpx.TimeoutException, httpx.RequestError):
+        transport = httpx.HTTPTransport(local_address="0.0.0.0")
+        with httpx.Client(timeout=settings.request_timeout_seconds, transport=transport) as client:
+            response = client.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+
+
 def fetch_hourly_forecast(location: Location) -> dict:
     cache_key = f"{location.latitude:.4f}:{location.longitude:.4f}:{location.timezone}"
     now = datetime.utcnow()
@@ -51,18 +69,15 @@ def fetch_hourly_forecast(location: Location) -> dict:
         "forecast_days": 7,
         "hourly": ",".join(HOURLY_FIELDS.keys()),
     }
-    max_attempts = 3
+    max_attempts = 4
     last_error: Exception | None = None
 
     for attempt in range(1, max_attempts + 1):
         try:
-            with httpx.Client(timeout=settings.request_timeout_seconds) as client:
-                response = client.get(settings.open_meteo_base_url, params=params)
-                response.raise_for_status()
-                payload = response.json()
-                with _forecast_cache_lock:
-                    _forecast_cache[cache_key] = (datetime.utcnow(), payload)
-                return payload
+            payload = _request_open_meteo_json_ipv4_fallback(settings.open_meteo_base_url, params)
+            with _forecast_cache_lock:
+                _forecast_cache[cache_key] = (datetime.utcnow(), payload)
+            return payload
         except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError) as exc:
             last_error = exc
             if attempt == max_attempts:
@@ -78,7 +93,9 @@ def fetch_hourly_forecast(location: Location) -> dict:
         if age_seconds <= settings.open_meteo_cache_stale_ttl_seconds:
             return cached_payload
 
-    raise RuntimeError(f"Open-Meteo request failed after {max_attempts} attempts") from last_error
+    raise RuntimeError(
+        f"Open-Meteo request failed after {max_attempts} attempts: {type(last_error).__name__}: {last_error}"
+    ) from last_error
 
 
 def ingest_hourly_forecast(db: Session, location: Location) -> int:
