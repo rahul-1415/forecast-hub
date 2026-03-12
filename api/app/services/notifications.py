@@ -18,6 +18,7 @@ from ..models import (
     NotificationChannelConnection,
     NotificationDeliveryLog,
     NotificationJob,
+    NotificationProviderState,
     NotificationSubscription,
     SevereWeatherEvent,
 )
@@ -32,6 +33,7 @@ from .plan import get_plan_windows
 logger = logging.getLogger(__name__)
 SUPPORTED_CHANNELS = {"telegram", "discord", "slack"}
 CONNECT_STATUSES = {"pending", "connected", "failed", "expired"}
+TELEGRAM_PROVIDER_STATE_KEY = "telegram"
 
 _scheduler_thread: threading.Thread | None = None
 _scheduler_stop_event = threading.Event()
@@ -128,13 +130,386 @@ def _default_payload(location_name: str, severity: str) -> dict:
     }
 
 
+def _format_subscription_details(subscription: NotificationSubscription) -> str:
+    included_sections: list[str] = []
+    if subscription.include_outfit:
+        included_sections.append("outfit")
+    if subscription.include_health:
+        included_sections.append("health")
+    if subscription.include_plan:
+        included_sections.append("plan")
+    include_text = ", ".join(included_sections) if included_sections else "none"
+
+    if subscription.quiet_hours_enabled:
+        quiet_text = f"{subscription.quiet_start}-{subscription.quiet_end}"
+    else:
+        quiet_text = "off"
+
+    escalation_text = "on" if subscription.escalation_enabled else "off"
+    return (
+        "Subscription details: "
+        f"location {subscription.location_name}; "
+        f"daily time {subscription.schedule_time} ({subscription.timezone}); "
+        f"sections {include_text}; "
+        f"quiet hours {quiet_text}; "
+        f"severe escalation {escalation_text}."
+    )
+
+
+def _telegram_settings_help_text() -> str:
+    return (
+        "Telegram controls:\n"
+        "/status - current subscription settings\n"
+        "/settime HH:MM - set daily notification time\n"
+        "/settimezone Area/City - set timezone (example: America/Chicago)\n"
+        "/quiet on|off - enable/disable quiet hours\n"
+        "/quiethours HH:MM HH:MM - set quiet hours window\n"
+        "/include outfit|health|plan on|off - toggle sections\n"
+        "/escalation on|off - severe weather escalation\n"
+        "/setlocation City Name - change location\n"
+        "/help - show this command list"
+    )
+
+
+def _build_connect_sample_payload(db: Session, subscription: NotificationSubscription) -> dict:
+    now = _utc_now()
+    location = get_or_create_location(db, subscription.location_name)
+    hours = get_hours_between(db, location.id, now, now + timedelta(hours=24))
+    if not hours:
+        try:
+            ingest_hourly_forecast(db, location)
+        except Exception as exc:
+            logger.warning("Connect sample payload fetch fallback failed for %s: %s", location.name, exc)
+        hours = get_hours_between(db, location.id, now, now + timedelta(hours=24))
+
+    details = _format_subscription_details(subscription)
+    if not hours:
+        return {
+            "title": f"Sample Weather Suggestion · {location.name}",
+            "body": (
+                "Sample suggestion: check hourly updates before leaving and keep one extra layer ready. "
+                + details
+            ),
+        }
+
+    current_temp = hours[0].temperature_c
+    next_hour_temp = hours[1].temperature_c if len(hours) > 1 else current_temp
+    precipitation_total = sum((h.precipitation_mm or 0.0) for h in hours)
+    max_wind = max((h.wind_speed_kph or 0.0) for h in hours)
+
+    tip_chunks: list[str] = []
+    if current_temp is not None:
+        if current_temp <= 5:
+            tip_chunks.append("wear warm layers")
+        elif current_temp >= 30:
+            tip_chunks.append("choose lightweight clothes and hydrate early")
+        else:
+            tip_chunks.append("a light layer should be comfortable")
+    if precipitation_total >= 4:
+        tip_chunks.append("carry an umbrella")
+    if max_wind >= 28:
+        tip_chunks.append("use wind-resistant outerwear")
+    if not tip_chunks:
+        tip_chunks.append("conditions look stable, so keep your usual outfit")
+
+    now_text = f"{current_temp:.1f} C" if current_temp is not None else "n/a"
+    next_text = f"{next_hour_temp:.1f} C" if next_hour_temp is not None else "n/a"
+    summary = (
+        f"{location.name}: now {now_text}, next hour {next_text}, "
+        f"24h precipitation {precipitation_total:.1f} mm, max wind {max_wind:.1f} kph."
+    )
+    suggestion = "Sample suggestion: " + ", ".join(tip_chunks) + "."
+    return {
+        "title": f"Sample Weather Suggestion · {location.name}",
+        "body": f"{summary} {suggestion} {details}",
+    }
+
+
+def _send_connect_welcome_messages(db: Session, subscription: NotificationSubscription) -> None:
+    details = _format_subscription_details(subscription)
+    test_payload = {
+        "title": "Forecast Hub Connected",
+        "body": (
+            "Test message: your channel connection is active and notifications are enabled. "
+            + details
+        ),
+    }
+    _deliver(subscription, test_payload)
+
+    sample_payload = _build_connect_sample_payload(db, subscription)
+    _deliver(subscription, sample_payload)
+    if subscription.channel == "telegram":
+        _deliver(
+            subscription,
+            {
+                "title": "Manage Settings From Telegram",
+                "body": _telegram_settings_help_text(),
+            },
+        )
+
+
+def _get_or_create_provider_state(db: Session, provider: str) -> NotificationProviderState:
+    state = (
+        db.query(NotificationProviderState)
+        .filter(NotificationProviderState.provider == provider)
+        .first()
+    )
+    if state is not None:
+        return state
+    state = NotificationProviderState(provider=provider, last_update_id=0)
+    db.add(state)
+    db.commit()
+    db.refresh(state)
+    return state
+
+
+def _parse_on_off(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"on", "true", "1", "yes"}:
+        return True
+    if normalized in {"off", "false", "0", "no"}:
+        return False
+    raise ValueError("Use 'on' or 'off'.")
+
+
+def _validate_timezone_name(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("Timezone is required.")
+    try:
+        ZoneInfo(cleaned)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Invalid timezone '{value}'.") from exc
+    return cleaned
+
+
+def _format_subscription_status_lines(subscriptions: list[NotificationSubscription]) -> str:
+    lines = ["Current Forecast Hub settings:"]
+    for index, subscription in enumerate(subscriptions, start=1):
+        include_sections: list[str] = []
+        if subscription.include_outfit:
+            include_sections.append("outfit")
+        if subscription.include_health:
+            include_sections.append("health")
+        if subscription.include_plan:
+            include_sections.append("plan")
+        include_text = ", ".join(include_sections) if include_sections else "none"
+        quiet_text = (
+            f"{subscription.quiet_start}-{subscription.quiet_end}"
+            if subscription.quiet_hours_enabled
+            else "off"
+        )
+        escalation_text = "on" if subscription.escalation_enabled else "off"
+        lines.append(
+            f"{index}) {subscription.location_name} | time {subscription.schedule_time} ({subscription.timezone}) | "
+            f"include {include_text} | quiet {quiet_text} | escalation {escalation_text}"
+        )
+    return "\n".join(lines)
+
+
+def _handle_telegram_settings_command(
+    db: Session,
+    *,
+    chat_id: str,
+    text: str,
+) -> str | None:
+    stripped = text.strip()
+    if not stripped.startswith("/"):
+        return None
+
+    parts = stripped.split()
+    command = parts[0].split("@", 1)[0].lower()
+    args = parts[1:]
+
+    supported_commands = {
+        "/help",
+        "/status",
+        "/settime",
+        "/settimezone",
+        "/quiet",
+        "/quiethours",
+        "/include",
+        "/escalation",
+        "/setlocation",
+    }
+    if command not in supported_commands:
+        return None
+
+    subscriptions = (
+        db.query(NotificationSubscription)
+        .filter(
+            NotificationSubscription.channel == "telegram",
+            NotificationSubscription.destination == chat_id,
+        )
+        .order_by(NotificationSubscription.id.asc())
+        .all()
+    )
+
+    if command == "/help":
+        return _telegram_settings_help_text()
+
+    if not subscriptions:
+        return (
+            "No Forecast Hub Telegram subscription is linked to this chat yet. "
+            "Connect Telegram from the app first."
+        )
+
+    try:
+        if command == "/status":
+            return _format_subscription_status_lines(subscriptions)
+
+        if command == "/settime":
+            if len(args) != 1:
+                return "Usage: /settime HH:MM"
+            schedule_time = args[0].strip()
+            _parse_hhmm(schedule_time)
+            for subscription in subscriptions:
+                subscription.schedule_time = schedule_time
+                subscription.next_run_at = _next_run_at_utc(schedule_time, subscription.timezone)
+            db.commit()
+            return f"Updated daily time to {schedule_time} for {len(subscriptions)} subscription(s)."
+
+        if command == "/settimezone":
+            if len(args) != 1:
+                return "Usage: /settimezone Area/City"
+            timezone_name = _validate_timezone_name(args[0])
+            for subscription in subscriptions:
+                subscription.timezone = timezone_name
+                subscription.next_run_at = _next_run_at_utc(subscription.schedule_time, timezone_name)
+            db.commit()
+            return f"Updated timezone to {timezone_name} for {len(subscriptions)} subscription(s)."
+
+        if command == "/quiet":
+            if len(args) != 1:
+                return "Usage: /quiet on|off"
+            enabled = _parse_on_off(args[0])
+            for subscription in subscriptions:
+                subscription.quiet_hours_enabled = enabled
+            db.commit()
+            return f"Quiet hours {'enabled' if enabled else 'disabled'} for {len(subscriptions)} subscription(s)."
+
+        if command == "/quiethours":
+            if len(args) != 2:
+                return "Usage: /quiethours HH:MM HH:MM"
+            start = args[0].strip()
+            end = args[1].strip()
+            _parse_hhmm(start)
+            _parse_hhmm(end)
+            for subscription in subscriptions:
+                subscription.quiet_hours_enabled = True
+                subscription.quiet_start = start
+                subscription.quiet_end = end
+            db.commit()
+            return f"Updated quiet hours to {start}-{end} for {len(subscriptions)} subscription(s)."
+
+        if command == "/include":
+            if len(args) != 2:
+                return "Usage: /include outfit|health|plan on|off"
+            section = args[0].strip().lower()
+            enabled = _parse_on_off(args[1])
+            if section not in {"outfit", "health", "plan"}:
+                return "Section must be one of: outfit, health, plan."
+            for subscription in subscriptions:
+                if section == "outfit":
+                    subscription.include_outfit = enabled
+                elif section == "health":
+                    subscription.include_health = enabled
+                elif section == "plan":
+                    subscription.include_plan = enabled
+            db.commit()
+            return f"Section '{section}' {'enabled' if enabled else 'disabled'} for {len(subscriptions)} subscription(s)."
+
+        if command == "/escalation":
+            if len(args) != 1:
+                return "Usage: /escalation on|off"
+            enabled = _parse_on_off(args[0])
+            for subscription in subscriptions:
+                subscription.escalation_enabled = enabled
+            db.commit()
+            return f"Severe weather escalation {'enabled' if enabled else 'disabled'} for {len(subscriptions)} subscription(s)."
+
+        if command == "/setlocation":
+            if not args:
+                return "Usage: /setlocation City Name"
+            location_name = " ".join(args).strip()
+            get_or_create_location(db, location_name)
+            for subscription in subscriptions:
+                subscription.location_name = location_name
+            db.commit()
+            return f"Updated location to {location_name} for {len(subscriptions)} subscription(s)."
+    except ValueError as exc:
+        db.rollback()
+        return str(exc)
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Telegram settings command failed chat_id=%s command=%s: %s", chat_id, command, exc)
+        return "Unable to apply that command right now. Try again shortly."
+
+    return None
+
+
+def _process_telegram_settings_commands(db: Session) -> int:
+    if not settings.telegram_bot_token:
+        return 0
+
+    state = _get_or_create_provider_state(db, TELEGRAM_PROVIDER_STATE_KEY)
+    last_update_id = state.last_update_id or 0
+
+    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/getUpdates"
+    with httpx.Client(timeout=settings.request_timeout_seconds) as client:
+        response = client.get(
+            url,
+            params={
+                "offset": last_update_id + 1,
+                "timeout": 0,
+                "allowed_updates": '["message","edited_message"]',
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    updates = data.get("result") or []
+    if not updates:
+        return 0
+
+    processed_commands = 0
+    max_update_id = last_update_id
+    for update in updates:
+        update_id = update.get("update_id")
+        if isinstance(update_id, int):
+            max_update_id = max(max_update_id, update_id)
+
+        message = update.get("message") or update.get("edited_message") or {}
+        text = str(message.get("text") or "")
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        if chat_id is None:
+            continue
+
+        response_text = _handle_telegram_settings_command(db, chat_id=str(chat_id), text=text)
+        if not response_text:
+            continue
+
+        try:
+            _deliver_telegram(str(chat_id), response_text)
+            processed_commands += 1
+        except Exception as exc:
+            logger.warning("Failed sending Telegram command response to chat_id=%s: %s", chat_id, exc)
+
+    if max_update_id > last_update_id:
+        state.last_update_id = max_update_id
+        db.commit()
+
+    return processed_commands
+
+
 def _connect_expiry(now: datetime | None = None) -> datetime:
     current = now or _utc_now()
     return current + timedelta(minutes=max(1, settings.notification_connect_token_ttl_minutes))
 
 
 def _require_api_base_url() -> str:
-    base_url = (settings.forecasthub_api_base_url or "").strip().rstrip("/")
+    base_url = (settings.runtime_forecasthub_api_base_url or "").strip().rstrip("/")
     if not base_url:
         raise RuntimeError("FORECASTHUB_API_BASE_URL is not configured")
     return base_url
@@ -375,6 +750,20 @@ def complete_channel_connection(
     connection.error_message = None
     db.commit()
     db.refresh(connection)
+
+    try:
+        _send_connect_welcome_messages(db, row)
+    except Exception as exc:
+        # Keep the channel connected, but expose why the immediate test/sample push failed.
+        logger.warning(
+            "Connected channel but failed immediate welcome send for subscription_id=%s: %s",
+            row.id,
+            exc,
+        )
+        connection.error_message = f"Connected, but immediate test messages failed: {exc}"
+        db.commit()
+        db.refresh(connection)
+
     return connection
 
 
@@ -386,9 +775,14 @@ def complete_telegram_connection_from_updates(db: Session, token: str) -> Notifi
         raise ValueError("Connection token is not for Telegram")
     _mark_connection_expired_if_needed(db, connection, _utc_now())
     db.refresh(connection)
-    if connection.status in {"connected", "failed", "expired"}:
+    if connection.status in {"failed", "expired"}:
         return connection
     if not settings.telegram_bot_token:
+        if connection.status == "connected":
+            connection.error_message = "Connected, but TELEGRAM_BOT_TOKEN is not configured for immediate messaging."
+            db.commit()
+            db.refresh(connection)
+            return connection
         return _fail_channel_connection(db, connection, "TELEGRAM_BOT_TOKEN is not configured")
 
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/getUpdates"
@@ -410,7 +804,50 @@ def complete_telegram_connection_from_updates(db: Session, token: str) -> Notifi
         chat_id = chat.get("id")
         if chat_id is None:
             continue
-        return complete_channel_connection(db, token=token, destination=str(chat_id))
+        chat_id_str = str(chat_id)
+        if connection.status == "connected":
+            if connection.destination and connection.destination != chat_id_str:
+                # Ignore /start from a different chat for an already bound token.
+                continue
+
+            message_epoch = message.get("date")
+            message_dt = None
+            if isinstance(message_epoch, (int, float)):
+                try:
+                    message_dt = datetime.utcfromtimestamp(float(message_epoch))
+                except Exception:
+                    message_dt = None
+
+            # Re-send only when /start is newer than the last successful use marker.
+            if connection.used_at and message_dt and message_dt <= connection.used_at:
+                return connection
+
+            subscription = None
+            if connection.subscription_id is not None:
+                subscription = (
+                    db.query(NotificationSubscription)
+                    .filter(NotificationSubscription.id == connection.subscription_id)
+                    .first()
+                )
+            if subscription is None:
+                return connection
+
+            try:
+                _send_connect_welcome_messages(db, subscription)
+                connection.error_message = None
+            except Exception as exc:
+                logger.warning(
+                    "Connected Telegram re-start message send failed for subscription_id=%s: %s",
+                    subscription.id,
+                    exc,
+                )
+                connection.error_message = f"Connected, but immediate test messages failed: {exc}"
+            connection.used_at = _utc_now()
+            db.commit()
+            db.refresh(connection)
+            return connection
+
+        return complete_channel_connection(db, token=token, destination=chat_id_str)
 
     return connection
 
@@ -1017,10 +1454,12 @@ def _process_due_jobs(db: Session, now: datetime) -> int:
 
 def run_notification_cycle(db: Session) -> dict:
     now = _utc_now()
+    telegram_commands_processed = _process_telegram_settings_commands(db)
     scheduled = _enqueue_due_daily_jobs(db, now)
     escalations = _enqueue_severe_escalations(db, now)
     processed = _process_due_jobs(db, now)
     return {
+        "telegram_commands_processed": telegram_commands_processed,
         "scheduled_jobs": scheduled,
         "escalation_jobs": escalations,
         "processed_jobs": processed,

@@ -272,6 +272,23 @@ class NotificationChannelConnection(Base):
     )
 
 
+class NotificationProviderState(Base):
+    __tablename__ = "notification_provider_states"
+    __table_args__ = (
+        UniqueConstraint("provider", name="uq_notification_provider_state_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    provider: Mapped[str] = mapped_column(String(64), index=True)
+    last_update_id: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class SevereWeatherEvent(Base):
     __tablename__ = "severe_weather_events"
 

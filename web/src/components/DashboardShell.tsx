@@ -75,6 +75,7 @@ export function DashboardShell({
   setTimeFormat,
   children,
 }: DashboardShellProps) {
+  const isLocalDev = import.meta.env.DEV;
   const [locationInput, setLocationInput] = useState("");
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -83,6 +84,7 @@ export function DashboardShell({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showNotificationSetup, setShowNotificationSetup] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<string | null>(null);
+  const [notificationStatusTone, setNotificationStatusTone] = useState<"info" | "error">("info");
   const [savedNotificationSubscriptionId, setSavedNotificationSubscriptionId] = useState<number | null>(null);
   const [notificationRequestPending, setNotificationRequestPending] = useState(false);
   const [notificationLogs, setNotificationLogs] = useState<
@@ -245,6 +247,16 @@ export function DashboardShell({
     setNotificationPreferences((previous) => ({ ...previous, [key]: value }));
   }
 
+  function showNotificationStatus(message: string | null, tone: "info" | "error" = "info") {
+    if (tone === "error" && !isLocalDev) {
+      setNotificationStatus(null);
+      setNotificationStatusTone("info");
+      return;
+    }
+    setNotificationStatus(message);
+    setNotificationStatusTone(tone);
+  }
+
   function getNotificationDestination() {
     return notificationConnectedDestination?.trim() || "";
   }
@@ -277,7 +289,7 @@ export function DashboardShell({
   async function startChannelConnection() {
     try {
       setNotificationRequestPending(true);
-      setNotificationStatus(null);
+      showNotificationStatus(null);
       setSavedNotificationSubscriptionId(null);
       setNotificationConnectedDestination(null);
 
@@ -299,10 +311,10 @@ export function DashboardShell({
       setNotificationConnectUrl(started.connect_url);
 
       window.open(started.connect_url, "_blank", "noopener,noreferrer");
-      setNotificationStatus(started.instructions);
+      showNotificationStatus(started.instructions, "info");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start channel connection.";
-      setNotificationStatus(message);
+      showNotificationStatus(message, "error");
     } finally {
       setNotificationRequestPending(false);
     }
@@ -310,13 +322,13 @@ export function DashboardShell({
 
   async function checkChannelConnection() {
     if (!notificationConnectToken) {
-      setNotificationStatus("Start a channel connection first.");
+      showNotificationStatus("Start a channel connection first.", "error");
       return;
     }
 
     try {
       setNotificationRequestPending(true);
-      setNotificationStatus(null);
+      showNotificationStatus(null);
       const status =
         notificationPreferences.channel === "telegram"
           ? await completeTelegramNotificationConnect(notificationConnectToken)
@@ -325,21 +337,28 @@ export function DashboardShell({
       if (status.status === "connected") {
         setSavedNotificationSubscriptionId(status.subscription_id ?? null);
         setNotificationConnectedDestination(status.destination ?? null);
-        setNotificationStatus(`${status.channel} connected. You can now save or send a test.`);
+        if (status.error_message) {
+          showNotificationStatus(
+            `${status.channel} connected with warning: ${status.error_message}`,
+            "info",
+          );
+        } else {
+          showNotificationStatus(`${status.channel} connected. You can now save or send a test.`, "info");
+        }
         return;
       }
       if (status.status === "pending") {
-        setNotificationStatus("Still waiting for channel authorization. Complete the provider flow, then check again.");
+        showNotificationStatus("Still waiting for channel authorization. Complete the provider flow, then check again.", "info");
         return;
       }
       if (status.status === "expired") {
-        setNotificationStatus("Connection link expired. Start connection again.");
+        showNotificationStatus("Connection link expired. Start connection again.", "error");
         return;
       }
-      setNotificationStatus(status.error_message || "Channel connection failed.");
+      showNotificationStatus(status.error_message || "Channel connection failed.", "error");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to check channel connection.";
-      setNotificationStatus(message);
+      showNotificationStatus(message, "error");
     } finally {
       setNotificationRequestPending(false);
     }
@@ -348,16 +367,16 @@ export function DashboardShell({
   async function sendTestNotification() {
     try {
       setNotificationRequestPending(true);
-      setNotificationStatus(null);
+      showNotificationStatus(null);
       const subscriptionId =
         savedNotificationSubscriptionId ?? (await upsertNotificationSubscriptionForCurrentPreferences());
       await sendNotificationTest(subscriptionId, "normal");
       const logs = await getNotificationDeliveryLogs(10);
       setNotificationLogs(logs);
-      setNotificationStatus("Test notification queued. Delivery logs will update after processing.");
+      showNotificationStatus("Test notification queued. Delivery logs will update after processing.", "info");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to queue test notification.";
-      setNotificationStatus(message);
+      showNotificationStatus(message, "error");
     } finally {
       setNotificationRequestPending(false);
     }
@@ -366,15 +385,15 @@ export function DashboardShell({
   async function saveNotificationPreferences() {
     try {
       setNotificationRequestPending(true);
-      setNotificationStatus(null);
+      showNotificationStatus(null);
       await upsertNotificationSubscriptionForCurrentPreferences();
       const logs = await getNotificationDeliveryLogs(10);
       setNotificationLogs(logs);
-      setNotificationStatus("Notification preferences saved to backend scheduler.");
+      showNotificationStatus("Notification preferences saved to backend scheduler.", "info");
       setShowNotificationSetup(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save notification preferences.";
-      setNotificationStatus(message);
+      showNotificationStatus(message, "error");
     } finally {
       setNotificationRequestPending(false);
     }
@@ -635,19 +654,16 @@ export function DashboardShell({
 
         <div className="top-nav-right">
           <div className="model-source-toggle">
+            <span className="model-source-label">Custom ML</span>
             <button
               type="button"
-              className={predictionSource === "open_meteo" ? "source-button active" : "source-button"}
-              onClick={() => setPredictionSource("open_meteo")}
+              role="switch"
+              aria-label="Enable Custom ML model"
+              aria-checked={predictionSource === "custom_ml"}
+              className={predictionSource === "custom_ml" ? "theme-slider active" : "theme-slider"}
+              onClick={() => setPredictionSource(predictionSource === "custom_ml" ? "open_meteo" : "custom_ml")}
             >
-              Open-Meteo
-            </button>
-            <button
-              type="button"
-              className={predictionSource === "custom_ml" ? "source-button active" : "source-button"}
-              onClick={() => setPredictionSource("custom_ml")}
-            >
-              Custom ML
+              <span className="theme-slider-thumb" />
             </button>
           </div>
 
@@ -655,7 +671,7 @@ export function DashboardShell({
             type="button"
             className="notification-setup-button"
             onClick={() => {
-              setNotificationStatus(null);
+              showNotificationStatus(null);
               setShowNotificationSetup(true);
             }}
           >
@@ -799,7 +815,7 @@ export function DashboardShell({
                 <span className="custom-ml-metric-value">{customMlPointCount}</span>
               </article>
             </div>
-            {!hourlyTemperaturesLoading && customMlPointCount === 0 ? (
+            {isLocalDev && !hourlyTemperaturesLoading && customMlPointCount === 0 ? (
               <p className="custom-ml-empty-note">
                 No loadable ML model output found. Trigger `train-model` to refresh model artifacts.
               </p>
@@ -1067,7 +1083,11 @@ export function DashboardShell({
               <p className="notification-preview-body">{notificationPreview}</p>
             </section>
 
-            {notificationStatus ? <p className="notification-status">{notificationStatus}</p> : null}
+            {notificationStatus ? (
+              <p className={notificationStatusTone === "error" ? "notification-status status-text error" : "notification-status"}>
+                {notificationStatus}
+              </p>
+            ) : null}
 
             {notificationLogs.length > 0 ? (
               <section className="notification-log-panel">

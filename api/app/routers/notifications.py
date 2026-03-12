@@ -1,3 +1,5 @@
+import html
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -150,6 +152,13 @@ def connect_slack_callback(
     except Exception as exc:
         return HTMLResponse(f"<h3>Slack connect failed</h3><p>{exc}</p>", status_code=400)
     if row.status == "connected":
+        if row.error_message:
+            warning = html.escape(row.error_message)
+            return HTMLResponse(
+                "<h3>Slack connected with warning</h3>"
+                f"<p>{warning}</p>"
+                "<p>You can close this tab and return to Forecast Hub.</p>"
+            )
         return HTMLResponse("<h3>Slack connected</h3><p>You can close this tab and return to Forecast Hub.</p>")
     return HTMLResponse(
         f"<h3>Slack connect status: {row.status}</h3><p>{row.error_message or 'Pending confirmation.'}</p>",
@@ -173,6 +182,13 @@ def connect_discord_callback(
     except Exception as exc:
         return HTMLResponse(f"<h3>Discord connect failed</h3><p>{exc}</p>", status_code=400)
     if row.status == "connected":
+        if row.error_message:
+            warning = html.escape(row.error_message)
+            return HTMLResponse(
+                "<h3>Discord connected with warning</h3>"
+                f"<p>{warning}</p>"
+                "<p>You can close this tab and return to Forecast Hub.</p>"
+            )
         return HTMLResponse("<h3>Discord connected</h3><p>You can close this tab and return to Forecast Hub.</p>")
     return HTMLResponse(
         f"<h3>Discord connect status: {row.status}</h3><p>{row.error_message or 'Pending confirmation.'}</p>",

@@ -16,8 +16,17 @@ export function OverviewPage({ data, loading, error, predictionSource, timeForma
   const currentTemperature = data?.current_temperature_c ?? null;
   const suggestionsTitle = predictionSource === "custom_ml" ? "AI Suggestions (Custom ML)" : "AI Suggestions";
   const sourceComparison = data?.source_comparison_next_hour ?? null;
-  const weeklySummary = data?.weekly_summary ?? null;
   const modelRmse = data?.custom_model_rmse_c ?? null;
+  const openMeteoNextHour =
+    sourceComparison?.open_meteo_next_hour_c ?? data?.next_hour_temperature_open_meteo_c ?? null;
+  const customMlNextHour =
+    sourceComparison?.custom_ml_next_hour_c ??
+    data?.next_hour_temperature_custom_model_c ??
+    data?.next_hour_temperature_prediction_c ??
+    null;
+  const modelDelta =
+    customMlNextHour != null && openMeteoNextHour != null ? customMlNextHour - openMeteoNextHour : null;
+  const weeklySummary = data?.weekly_summary ?? null;
   const nextHourReference =
     predictionSource === "custom_ml"
       ? (data?.next_hour_temperature_custom_model_c ?? data?.next_hour_temperature_prediction_c ?? null)
@@ -106,40 +115,36 @@ export function OverviewPage({ data, loading, error, predictionSource, timeForma
             />
           </div>
 
-          <section className="panel">
-            <h3>Confidence & Source Comparison</h3>
-            <div className="source-comparison-grid">
-              <article className="source-card">
-                <p className="visual-card-title">Open-Meteo Next Hour</p>
-                <p className="source-card-value">
-                  {sourceComparison?.open_meteo_next_hour_c != null
-                    ? `${sourceComparison.open_meteo_next_hour_c.toFixed(1)} C`
-                    : "-"}
-                </p>
-              </article>
-              <article className="source-card">
-                <p className="visual-card-title">Custom ML Next Hour</p>
-                <p className="source-card-value">
-                  {sourceComparison?.custom_ml_next_hour_c != null
-                    ? `${sourceComparison.custom_ml_next_hour_c.toFixed(1)} C`
-                    : "-"}
-                </p>
-              </article>
-              <article className="source-card">
-                <p className="visual-card-title">Model Confidence Band</p>
-                <p className="source-card-value">
-                  {sourceComparison?.custom_ml_next_hour_c != null && modelRmse != null
-                    ? `${(sourceComparison.custom_ml_next_hour_c - modelRmse).toFixed(1)} to ${(sourceComparison.custom_ml_next_hour_c + modelRmse).toFixed(1)} C`
-                    : "Unavailable"}
-                </p>
-              </article>
-              <article className="source-card">
-                <p className="visual-card-title">Preferred Source</p>
-                <p className="source-card-value">{sourceComparison?.preferred_source ?? "mixed"}</p>
-                <p className="panel-source-note">{sourceComparison?.confidence_note ?? "No confidence note available."}</p>
-              </article>
-            </div>
-          </section>
+          {predictionSource === "custom_ml" ? (
+            <section className="panel">
+              <h3>Model Comparison</h3>
+              <div className="source-comparison-grid">
+                <article className="source-card">
+                  <p className="visual-card-title">Open-Meteo Next Hour</p>
+                  <p className="source-card-value">{openMeteoNextHour != null ? `${openMeteoNextHour.toFixed(1)} C` : "-"}</p>
+                </article>
+                <article className="source-card">
+                  <p className="visual-card-title">Custom ML Next Hour</p>
+                  <p className="source-card-value">{customMlNextHour != null ? `${customMlNextHour.toFixed(1)} C` : "-"}</p>
+                </article>
+                <article className="source-card">
+                  <p className="visual-card-title">Difference (ML - Open-Meteo)</p>
+                  <p className="source-card-value">{modelDelta != null ? `${modelDelta.toFixed(1)} C` : "-"}</p>
+                </article>
+                <article className="source-card">
+                  <p className="visual-card-title">Model Confidence Band</p>
+                  <p className="source-card-value">
+                    {customMlNextHour != null && modelRmse != null
+                      ? `${(customMlNextHour - modelRmse).toFixed(1)} to ${(customMlNextHour + modelRmse).toFixed(1)} C`
+                      : "Unavailable"}
+                  </p>
+                </article>
+              </div>
+              <p className="panel-source-note">
+                {sourceComparison?.confidence_note ?? "Comparison view is shown only in Custom ML mode."}
+              </p>
+            </section>
+          ) : null}
 
           <section className="panel">
             <h3>Visual Snapshot</h3>

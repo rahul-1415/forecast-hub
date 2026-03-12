@@ -7,8 +7,14 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./forecast_hub.db"
     supabase_database_url: str | None = None
+    database_url_dev: str | None = None
+    database_url_prod: str | None = None
+    supabase_database_url_dev: str | None = None
+    supabase_database_url_prod: str | None = None
 
     frontend_origin: str = "http://localhost:5173"
+    frontend_origin_dev: str | None = None
+    frontend_origin_prod: str | None = None
 
     default_location_name: str = "Chicago"
     default_location_latitude: float = 41.8781
@@ -48,6 +54,8 @@ class Settings(BaseSettings):
     telegram_bot_username: str | None = None
 
     forecasthub_api_base_url: str | None = None
+    forecasthub_api_base_url_dev: str | None = None
+    forecasthub_api_base_url_prod: str | None = None
     slack_client_id: str | None = None
     slack_client_secret: str | None = None
     discord_client_id: str | None = None
@@ -66,16 +74,58 @@ class Settings(BaseSettings):
     )
 
     @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() in {"production", "prod"}
+
+    def _pick_by_env(
+        self,
+        *,
+        dev_value: str | None,
+        prod_value: str | None,
+        fallback: str | None,
+    ) -> str:
+        primary = prod_value if self.is_production else dev_value
+        selected = (primary or "").strip() or (fallback or "").strip()
+        return selected
+
+    @property
+    def runtime_frontend_origin(self) -> str:
+        return self._pick_by_env(
+            dev_value=self.frontend_origin_dev,
+            prod_value=self.frontend_origin_prod,
+            fallback=self.frontend_origin,
+        )
+
+    @property
+    def runtime_forecasthub_api_base_url(self) -> str | None:
+        value = self._pick_by_env(
+            dev_value=self.forecasthub_api_base_url_dev,
+            prod_value=self.forecasthub_api_base_url_prod,
+            fallback=self.forecasthub_api_base_url,
+        )
+        return value or None
+
+    @property
     def allowed_origins(self) -> list[str]:
-        return [origin.strip() for origin in self.frontend_origin.split(",") if origin.strip()]
+        source = self.runtime_frontend_origin
+        return [origin.strip() for origin in source.split(",") if origin.strip()]
 
     @property
     def sqlalchemy_database_url(self) -> str:
-        supabase_candidate = (self.supabase_database_url or "").strip()
+        supabase_candidate = self._pick_by_env(
+            dev_value=self.supabase_database_url_dev,
+            prod_value=self.supabase_database_url_prod,
+            fallback=self.supabase_database_url,
+        )
+        database_candidate = self._pick_by_env(
+            dev_value=self.database_url_dev,
+            prod_value=self.database_url_prod,
+            fallback=self.database_url,
+        )
         if supabase_candidate.startswith(("postgres://", "postgresql://", "postgresql+psycopg://")):
             raw_url = supabase_candidate
         else:
-            raw_url = self.database_url
+            raw_url = database_candidate
         url = raw_url.strip()
         if url.startswith("postgres://"):
             url = f"postgresql://{url.removeprefix('postgres://')}"

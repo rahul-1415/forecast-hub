@@ -575,25 +575,19 @@ p {
 }
 
 .model-source-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.35rem;
-  min-width: 220px;
-}
-
-.source-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
   border: 1px solid var(--line);
   border-radius: 0.68rem;
   background: var(--surface-2);
-  color: var(--ink-soft);
-  padding: 0.45rem 0.4rem;
-  font-size: 0.76rem;
-  cursor: pointer;
+  padding: 0.25rem 0.45rem;
 }
 
-.source-button.active {
+.model-source-label {
   color: var(--ink);
-  border-color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 600;
 }
 
 .notification-setup-button {
