@@ -11,10 +11,15 @@ class Base(DeclarativeBase):
 
 
 connect_args = {}
-if settings.sqlalchemy_database_url.startswith("sqlite"):
+db_url = settings.sqlalchemy_database_url
+if db_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
+elif db_url.startswith("postgresql+psycopg://"):
+    # Prevent server-side prepared statements from breaking behind poolers
+    # (e.g. Supabase/Neon transaction pooling).
+    connect_args = {"prepare_threshold": None}
 
-engine = create_engine(settings.sqlalchemy_database_url, pool_pre_ping=True, connect_args=connect_args)
+engine = create_engine(db_url, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
