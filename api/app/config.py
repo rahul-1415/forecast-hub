@@ -42,19 +42,16 @@ class Settings(BaseSettings):
     notification_job_batch_size: int = 20
     notification_max_retries: int = 3
     notification_retry_backoff_seconds: str = "60,300,900"
-
-    smtp_host: str | None = None
-    smtp_port: int = 587
-    smtp_username: str | None = None
-    smtp_password: str | None = None
-    smtp_from_email: str | None = None
-    smtp_use_tls: bool = True
+    notification_connect_token_ttl_minutes: int = 30
 
     telegram_bot_token: str | None = None
+    telegram_bot_username: str | None = None
 
-    twilio_account_sid: str | None = None
-    twilio_auth_token: str | None = None
-    twilio_from_number: str | None = None
+    forecasthub_api_base_url: str | None = None
+    slack_client_id: str | None = None
+    slack_client_secret: str | None = None
+    discord_client_id: str | None = None
+    discord_client_secret: str | None = None
 
     severe_risk_threshold: int = 70
     severe_precip_threshold_mm: float = 25.0

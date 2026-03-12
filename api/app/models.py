@@ -244,6 +244,34 @@ class NotificationDeliveryLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
 
 
+class NotificationChannelConnection(Base):
+    __tablename__ = "notification_channel_connections"
+    __table_args__ = (
+        UniqueConstraint("token", name="uq_notification_channel_connection_token"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    channel: Mapped[str] = mapped_column(String(24), index=True)
+    token: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    destination: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    subscription_id: Mapped[int | None] = mapped_column(
+        ForeignKey("notification_subscriptions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class SevereWeatherEvent(Base):
     __tablename__ = "severe_weather_events"
 

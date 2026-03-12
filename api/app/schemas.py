@@ -174,7 +174,7 @@ class ModelVersionsResponse(BaseModel):
 
 class NotificationSubscriptionCreate(BaseModel):
     location_name: str
-    channel: Literal["email", "telegram", "sms"]
+    channel: Literal["telegram", "discord", "slack"]
     destination: str
     enabled: bool = True
     schedule_time: str = "08:00"
@@ -254,3 +254,39 @@ class NotificationDeliveryLogItem(BaseModel):
 
 class NotificationDeliveryLogsResponse(BaseModel):
     items: list[NotificationDeliveryLogItem]
+
+
+class NotificationConnectStartRequest(BaseModel):
+    location_name: str
+    channel: Literal["telegram", "discord", "slack"]
+    enabled: bool = True
+    schedule_time: str = "08:00"
+    timezone: str = "UTC"
+    include_outfit: bool = True
+    include_health: bool = True
+    include_plan: bool = True
+    quiet_hours_enabled: bool = False
+    quiet_start: str = "22:00"
+    quiet_end: str = "07:00"
+    escalation_enabled: bool = True
+
+
+class NotificationConnectStartResponse(BaseModel):
+    token: str
+    channel: Literal["telegram", "discord", "slack"]
+    connect_url: str
+    expires_at: datetime
+    instructions: str
+
+
+class NotificationConnectStatusResponse(BaseModel):
+    token: str
+    channel: Literal["telegram", "discord", "slack"]
+    status: Literal["pending", "connected", "failed", "expired"]
+    subscription_id: int | None
+    destination: str | None
+    error_message: str | None
+
+
+class NotificationTelegramConnectCompleteRequest(BaseModel):
+    token: str

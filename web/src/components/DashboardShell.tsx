@@ -1,13 +1,16 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  completeTelegramNotificationConnect,
   getLocationSuggestions,
+  getNotificationConnectStatus,
   getNotificationDeliveryLogs,
   sendNotificationTest,
+  startNotificationConnect,
   upsertNotificationSubscription,
 } from "../api/client";
 import { NumericSparkline } from "./NumericSparkline";
-import type { LocationSuggestion } from "../types";
+import type { LocationSuggestion, NotificationChannel } from "../types";
 import { formatHourFromTimestamp, type TimeFormat } from "../utils/time";
 
 type DashboardShellProps = {
@@ -38,10 +41,7 @@ type NotificationPreferences = {
   time: string;
   timezone: string;
   location: string;
-  channel: "email" | "telegram" | "mobile";
-  email: string;
-  telegram: string;
-  mobile: string;
+  channel: NotificationChannel;
   clothingStyle: "casual" | "business" | "sporty" | "outdoor";
   quietHoursEnabled: boolean;
   quietStart: string;
@@ -88,16 +88,16 @@ export function DashboardShell({
   const [notificationLogs, setNotificationLogs] = useState<
     { id: number; status: string; channel: string; destination: string; created_at: string; provider_message: string | null }[]
   >([]);
+  const [notificationConnectToken, setNotificationConnectToken] = useState<string | null>(null);
+  const [notificationConnectUrl, setNotificationConnectUrl] = useState<string | null>(null);
+  const [notificationConnectedDestination, setNotificationConnectedDestination] = useState<string | null>(null);
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(() => {
     const defaults: NotificationPreferences = {
       enabled: true,
       time: "08:00",
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       location: activeLocation,
-      channel: "email",
-      email: "",
-      telegram: "",
-      mobile: "",
+      channel: "telegram",
       clothingStyle: "casual",
       quietHoursEnabled: true,
       quietStart: "22:00",
@@ -117,7 +117,11 @@ export function DashboardShell({
         return defaults;
       }
       const parsed = JSON.parse(raw) as Partial<NotificationPreferences>;
-      return { ...defaults, ...parsed };
+      const merged = { ...defaults, ...parsed };
+      if (!["telegram", "discord", "slack"].includes(String(merged.channel))) {
+        merged.channel = "telegram";
+      }
+      return merged;
     } catch {
       return defaults;
     }
@@ -217,18 +221,21 @@ export function DashboardShell({
     return weatherBits.slice(0, 3).join(" ");
   }, [currentTemperatureC, nextHourDelta, notificationPreferences.includeCommute, notificationPreferences.includeHealth, notificationPreferences.includeOutfit]);
   const selectedNotificationContact = useMemo(() => {
-    if (notificationPreferences.channel === "email") {
-      return notificationPreferences.email.trim() || "No email set";
+    if (notificationConnectedDestination) {
+      if (notificationPreferences.channel === "telegram") {
+        return `Chat ${notificationConnectedDestination}`;
+      }
+      try {
+        const parsed = new URL(notificationConnectedDestination);
+        return `${parsed.origin}/***`;
+      } catch {
+        return "Connected";
+      }
     }
-    if (notificationPreferences.channel === "telegram") {
-      return notificationPreferences.telegram.trim() || "No Telegram handle set";
-    }
-    return notificationPreferences.mobile.trim() || "No mobile number set";
+    return "Not connected";
   }, [
+    notificationConnectedDestination,
     notificationPreferences.channel,
-    notificationPreferences.email,
-    notificationPreferences.mobile,
-    notificationPreferences.telegram,
   ]);
 
   function updateNotificationPreference<K extends keyof NotificationPreferences>(
@@ -239,25 +246,18 @@ export function DashboardShell({
   }
 
   function getNotificationDestination() {
-    if (notificationPreferences.channel === "email") {
-      return notificationPreferences.email.trim();
-    }
-    if (notificationPreferences.channel === "telegram") {
-      return notificationPreferences.telegram.trim();
-    }
-    return notificationPreferences.mobile.trim();
+    return notificationConnectedDestination?.trim() || "";
   }
 
   async function upsertNotificationSubscriptionForCurrentPreferences() {
     const destination = getNotificationDestination();
     if (!destination) {
-      throw new Error("Please add a valid contact for the selected channel.");
+      throw new Error(`Connect ${notificationPreferences.channel} first, then save.`);
     }
 
-    const channel = notificationPreferences.channel === "mobile" ? "sms" : notificationPreferences.channel;
     const row = await upsertNotificationSubscription({
       location_name: notificationPreferences.location,
-      channel,
+      channel: notificationPreferences.channel,
       destination,
       enabled: notificationPreferences.enabled,
       schedule_time: notificationPreferences.time,
@@ -272,6 +272,77 @@ export function DashboardShell({
     });
     setSavedNotificationSubscriptionId(row.id);
     return row.id;
+  }
+
+  async function startChannelConnection() {
+    try {
+      setNotificationRequestPending(true);
+      setNotificationStatus(null);
+      setSavedNotificationSubscriptionId(null);
+      setNotificationConnectedDestination(null);
+
+      const started = await startNotificationConnect({
+        location_name: notificationPreferences.location,
+        channel: notificationPreferences.channel,
+        enabled: notificationPreferences.enabled,
+        schedule_time: notificationPreferences.time,
+        timezone: notificationPreferences.timezone,
+        include_outfit: notificationPreferences.includeOutfit,
+        include_health: notificationPreferences.includeHealth,
+        include_plan: notificationPreferences.includeCommute,
+        quiet_hours_enabled: notificationPreferences.quietHoursEnabled,
+        quiet_start: notificationPreferences.quietStart,
+        quiet_end: notificationPreferences.quietEnd,
+        escalation_enabled: true,
+      });
+      setNotificationConnectToken(started.token);
+      setNotificationConnectUrl(started.connect_url);
+
+      window.open(started.connect_url, "_blank", "noopener,noreferrer");
+      setNotificationStatus(started.instructions);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start channel connection.";
+      setNotificationStatus(message);
+    } finally {
+      setNotificationRequestPending(false);
+    }
+  }
+
+  async function checkChannelConnection() {
+    if (!notificationConnectToken) {
+      setNotificationStatus("Start a channel connection first.");
+      return;
+    }
+
+    try {
+      setNotificationRequestPending(true);
+      setNotificationStatus(null);
+      const status =
+        notificationPreferences.channel === "telegram"
+          ? await completeTelegramNotificationConnect(notificationConnectToken)
+          : await getNotificationConnectStatus(notificationConnectToken);
+
+      if (status.status === "connected") {
+        setSavedNotificationSubscriptionId(status.subscription_id ?? null);
+        setNotificationConnectedDestination(status.destination ?? null);
+        setNotificationStatus(`${status.channel} connected. You can now save or send a test.`);
+        return;
+      }
+      if (status.status === "pending") {
+        setNotificationStatus("Still waiting for channel authorization. Complete the provider flow, then check again.");
+        return;
+      }
+      if (status.status === "expired") {
+        setNotificationStatus("Connection link expired. Start connection again.");
+        return;
+      }
+      setNotificationStatus(status.error_message || "Channel connection failed.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to check channel connection.";
+      setNotificationStatus(message);
+    } finally {
+      setNotificationRequestPending(false);
+    }
   }
 
   async function sendTestNotification() {
@@ -352,6 +423,13 @@ export function DashboardShell({
 
     window.localStorage.setItem(NOTIFICATION_PREFS_KEY, JSON.stringify(notificationPreferences));
   }, [notificationPreferences]);
+
+  useEffect(() => {
+    setNotificationConnectToken(null);
+    setNotificationConnectUrl(null);
+    setNotificationConnectedDestination(null);
+    setSavedNotificationSubscriptionId(null);
+  }, [notificationPreferences.channel]);
 
   useEffect(() => {
     if (!showNotificationSetup) {
@@ -823,7 +901,7 @@ export function DashboardShell({
             </header>
 
             <p className="notification-modal-note">
-              Enter email, Telegram, or mobile contact and choose where daily personalized recommendations should be sent.
+              Configure Telegram, Discord, or Slack daily reminders. Connect your channel once, then Forecast Hub will deliver daily weather-based recommendations automatically.
             </p>
 
             <div className="notification-form-grid">
@@ -879,41 +957,28 @@ export function DashboardShell({
                     )
                   }
                 >
-                  <option value="email">Email</option>
                   <option value="telegram">Telegram</option>
-                  <option value="mobile">Mobile (SMS)</option>
+                  <option value="discord">Discord</option>
+                  <option value="slack">Slack</option>
                 </select>
               </label>
 
-              <label className="notification-field">
-                <span>Email contact</span>
-                <input
-                  type="email"
-                  value={notificationPreferences.email}
-                  onChange={(event) => updateNotificationPreference("email", event.target.value)}
-                  placeholder="you@example.com"
-                />
-              </label>
-
-              <label className="notification-field">
-                <span>Telegram contact</span>
-                <input
-                  type="text"
-                  value={notificationPreferences.telegram}
-                  onChange={(event) => updateNotificationPreference("telegram", event.target.value)}
-                  placeholder="@username"
-                />
-              </label>
-
-              <label className="notification-field">
-                <span>Mobile contact</span>
-                <input
-                  type="tel"
-                  value={notificationPreferences.mobile}
-                  onChange={(event) => updateNotificationPreference("mobile", event.target.value)}
-                  placeholder="+1 555 000 0000"
-                />
-              </label>
+              <div className="notification-field notification-connect-actions">
+                <span>Channel authorization</span>
+                <div className="notification-connect-buttons">
+                  <button type="button" onClick={startChannelConnection} disabled={notificationRequestPending}>
+                    {notificationRequestPending ? "Working..." : "Connect Channel"}
+                  </button>
+                  <button type="button" onClick={checkChannelConnection} disabled={notificationRequestPending}>
+                    Check Connection
+                  </button>
+                </div>
+                {notificationConnectUrl ? (
+                  <a href={notificationConnectUrl} target="_blank" rel="noreferrer">
+                    Open connect link again
+                  </a>
+                ) : null}
+              </div>
 
               <label className="notification-field">
                 <span>Clothing style</span>

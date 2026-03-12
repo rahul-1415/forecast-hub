@@ -1,4 +1,11 @@
-import type { LocationSuggestion, NotificationDeliveryLog, NotificationSubscription } from "../types";
+import type {
+  LocationSuggestion,
+  NotificationChannel,
+  NotificationConnectStartResponse,
+  NotificationConnectStatusResponse,
+  NotificationDeliveryLog,
+  NotificationSubscription,
+} from "../types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -71,7 +78,7 @@ export async function getNotificationSubscriptions() {
 
 export async function upsertNotificationSubscription(payload: {
   location_name: string;
-  channel: "email" | "telegram" | "sms";
+  channel: NotificationChannel;
   destination: string;
   enabled: boolean;
   schedule_time: string;
@@ -88,6 +95,41 @@ export async function upsertNotificationSubscription(payload: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+}
+
+export async function startNotificationConnect(payload: {
+  location_name: string;
+  channel: NotificationChannel;
+  enabled: boolean;
+  schedule_time: string;
+  timezone: string;
+  include_outfit: boolean;
+  include_health: boolean;
+  include_plan: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_start: string;
+  quiet_end: string;
+  escalation_enabled: boolean;
+}) {
+  return request<NotificationConnectStartResponse>("/v1/notifications/connect/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getNotificationConnectStatus(token: string) {
+  return request<NotificationConnectStatusResponse>(
+    `/v1/notifications/connect/status?token=${encodeURIComponent(token)}`,
+  );
+}
+
+export async function completeTelegramNotificationConnect(token: string) {
+  return request<NotificationConnectStatusResponse>("/v1/notifications/connect/telegram/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
   });
 }
 

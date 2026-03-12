@@ -126,7 +126,7 @@ export type AnomaliesResponse = {
 export type NotificationSubscription = {
   id: number;
   location_name: string;
-  channel: "email" | "telegram" | "sms";
+  channel: "telegram" | "discord" | "slack";
   destination: string;
   enabled: boolean;
   schedule_time: string;
@@ -142,6 +142,25 @@ export type NotificationSubscription = {
   last_sent_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type NotificationChannel = "telegram" | "discord" | "slack";
+
+export type NotificationConnectStartResponse = {
+  token: string;
+  channel: NotificationChannel;
+  connect_url: string;
+  expires_at: string;
+  instructions: string;
+};
+
+export type NotificationConnectStatusResponse = {
+  token: string;
+  channel: NotificationChannel;
+  status: "pending" | "connected" | "failed" | "expired";
+  subscription_id: number | null;
+  destination: string | null;
+  error_message: string | null;
 };
 
 export type NotificationDeliveryLog = {
