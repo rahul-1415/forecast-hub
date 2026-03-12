@@ -767,6 +767,59 @@ def complete_channel_connection(
     return connection
 
 
+def _complete_telegram_connection_for_start_message(
+    db: Session,
+    *,
+    token: str,
+    chat_id: str,
+    message_dt: datetime | None,
+) -> NotificationChannelConnection | None:
+    connection = _get_connection_by_token(db, token)
+    if connection is None or connection.channel != "telegram":
+        return None
+
+    _mark_connection_expired_if_needed(db, connection, _utc_now())
+    db.refresh(connection)
+    if connection.status in {"failed", "expired"}:
+        return connection
+
+    if connection.status == "connected":
+        if connection.destination and connection.destination != chat_id:
+            # Ignore /start from a different chat for an already bound token.
+            return connection
+
+        # Re-send only when /start is newer than the last successful use marker.
+        if connection.used_at and message_dt and message_dt <= connection.used_at:
+            return connection
+
+        subscription = None
+        if connection.subscription_id is not None:
+            subscription = (
+                db.query(NotificationSubscription)
+                .filter(NotificationSubscription.id == connection.subscription_id)
+                .first()
+            )
+        if subscription is None:
+            return connection
+
+        try:
+            _send_connect_welcome_messages(db, subscription)
+            connection.error_message = None
+        except Exception as exc:
+            logger.warning(
+                "Connected Telegram re-start message send failed for subscription_id=%s: %s",
+                subscription.id,
+                exc,
+            )
+            connection.error_message = f"Connected, but immediate test messages failed: {exc}"
+        connection.used_at = _utc_now()
+        db.commit()
+        db.refresh(connection)
+        return connection
+
+    return complete_channel_connection(db, token=token, destination=chat_id)
+
+
 def complete_telegram_connection_from_updates(db: Session, token: str) -> NotificationChannelConnection:
     connection = _get_connection_by_token(db, token)
     if connection is None:
@@ -804,50 +857,22 @@ def complete_telegram_connection_from_updates(db: Session, token: str) -> Notifi
         chat_id = chat.get("id")
         if chat_id is None:
             continue
-        chat_id_str = str(chat_id)
-        if connection.status == "connected":
-            if connection.destination and connection.destination != chat_id_str:
-                # Ignore /start from a different chat for an already bound token.
-                continue
-
-            message_epoch = message.get("date")
-            message_dt = None
-            if isinstance(message_epoch, (int, float)):
-                try:
-                    message_dt = datetime.utcfromtimestamp(float(message_epoch))
-                except Exception:
-                    message_dt = None
-
-            # Re-send only when /start is newer than the last successful use marker.
-            if connection.used_at and message_dt and message_dt <= connection.used_at:
-                return connection
-
-            subscription = None
-            if connection.subscription_id is not None:
-                subscription = (
-                    db.query(NotificationSubscription)
-                    .filter(NotificationSubscription.id == connection.subscription_id)
-                    .first()
-                )
-            if subscription is None:
-                return connection
-
+        message_epoch = message.get("date")
+        message_dt = None
+        if isinstance(message_epoch, (int, float)):
             try:
-                _send_connect_welcome_messages(db, subscription)
-                connection.error_message = None
-            except Exception as exc:
-                logger.warning(
-                    "Connected Telegram re-start message send failed for subscription_id=%s: %s",
-                    subscription.id,
-                    exc,
-                )
-                connection.error_message = f"Connected, but immediate test messages failed: {exc}"
-            connection.used_at = _utc_now()
-            db.commit()
-            db.refresh(connection)
-            return connection
+                message_dt = datetime.utcfromtimestamp(float(message_epoch))
+            except Exception:
+                message_dt = None
 
-        return complete_channel_connection(db, token=token, destination=chat_id_str)
+        resolved = _complete_telegram_connection_for_start_message(
+            db,
+            token=token,
+            chat_id=str(chat_id),
+            message_dt=message_dt,
+        )
+        if resolved is not None:
+            return resolved
 
     return connection
 
