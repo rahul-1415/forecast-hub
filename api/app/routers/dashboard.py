@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+import re
 import threading
 
 from fastapi import APIRouter, Depends, Query
@@ -38,7 +39,11 @@ from ..services.model_workflow import (
 )
 from ..services.orchestration import count_recent_anomalies
 from ..services.outfit import get_or_generate_outfit
-from ..services.plan import get_plan_windows
+from ..services.plan import (
+    build_plan_window_summary,
+    build_plan_window_why,
+    get_plan_windows,
+)
 
 router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
 
@@ -46,6 +51,10 @@ _overview_cache_lock = threading.Lock()
 _overview_cache: dict[str, tuple[datetime, OverviewResponse]] = {}
 _OVERVIEW_CACHE_TTL_SECONDS = 90
 _OVERVIEW_CACHE_STALE_SECONDS = 60 * 60
+_BANNED_RECOMMENDATION_PHRASES = (
+    "use plan and health dashboards before long outdoor blocks.",
+    "re-check anomalies for rapid weather shifts.",
+)
 
 
 def _location_read(location: Location) -> LocationRead:
@@ -214,8 +223,8 @@ def _build_recommendation_details(
     for row in plan_rows[:2]:
         details.append(
             RecommendationDetail(
-                recommendation=row.summary,
-                why=f"{row.category.title()} scored {row.score:.0f}/100 at {row.best_hour:02d}:00 based on temperature, precipitation, wind, and comfort weights.",
+                recommendation=build_plan_window_summary(row.category, row.best_hour, row.score),
+                why=build_plan_window_why(row.category, row.best_hour, row.score),
                 source="plan",
             )
         )
@@ -261,6 +270,26 @@ def _build_recommendation_details(
     )
 
     return details
+
+
+def _sanitize_recommendations(items: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if not item:
+            continue
+        for line in re.split(r"[\r\n]+", item):
+            normalized_line = line.strip().lstrip("-• ").strip()
+            if not normalized_line:
+                continue
+            normalized_lower = normalized_line.lower()
+            if any(phrase in normalized_lower for phrase in _BANNED_RECOMMENDATION_PHRASES):
+                continue
+            if normalized_line in seen:
+                continue
+            seen.add(normalized_line)
+            cleaned.append(normalized_line)
+    return cleaned
 
 
 @router.get("/overview", response_model=OverviewResponse)
@@ -324,7 +353,10 @@ def get_overview(
             elif highest >= 40:
                 alert_level = "medium"
 
-        recommendations = [row.summary for row in plan_rows[:2]]
+        recommendations = [
+            build_plan_window_summary(row.category, row.best_hour, row.score)
+            for row in plan_rows[:2]
+        ]
         if outfit_row:
             recommendations.append(outfit_row.summary)
         if health_row:
@@ -351,6 +383,7 @@ def get_overview(
             recommendations.append(llm_hint)
         except Exception:
             recommendations.append("Recommendations are generated from live weather trends and current risk levels.")
+        recommendations = _sanitize_recommendations(recommendations)
 
         hourly_points = [
             HourlyTemperaturePoint(timestamp=hour.timestamp, temperature_c=hour.temperature_c)
@@ -478,7 +511,7 @@ def get_plan(
             category=row.category,
             best_hour=row.best_hour,
             score=row.score,
-            summary=row.summary,
+            summary=build_plan_window_summary(row.category, row.best_hour, row.score),
         )
         for row in rows
     ]

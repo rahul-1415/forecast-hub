@@ -33,34 +33,82 @@ export function OverviewPage({ data, loading, error, predictionSource, timeForma
       : (data?.next_hour_temperature_open_meteo_c ?? data?.next_hour_temperature_prediction_c ?? null);
   const nextHourDelta =
     nextHourReference != null && currentTemperature != null ? nextHourReference - currentTemperature : null;
+  const clothingSuggestion = (() => {
+    if (currentTemperature == null) {
+      return "Clothing suggestion: wear comfortable layers and check updates before heading out.";
+    }
+    if (currentTemperature <= 0) {
+      return "Clothing suggestion: wear a heavy coat, gloves, and insulated shoes.";
+    }
+    if (currentTemperature <= 10) {
+      return "Clothing suggestion: wear a warm jacket with one extra layer.";
+    }
+    if (currentTemperature <= 20) {
+      return "Clothing suggestion: a light jacket or hoodie should be enough.";
+    }
+    if (currentTemperature <= 28) {
+      return "Clothing suggestion: go with breathable clothing and light layers.";
+    }
+    return "Clothing suggestion: wear lightweight clothes and stay hydrated.";
+  })();
 
   return (
     <section className="dashboard-page">
       <header className="page-header">
-        <h2>Overview</h2>
+        <h2>AI Suggestion Hub</h2>
       </header>
 
       {loading ? (
         <section className="panel loading-panel">
           <span className="loader-ring" aria-hidden="true" />
-          <p className="status-text">Loading overview...</p>
+          <p className="status-text">Loading insights...</p>
         </section>
       ) : null}
 
       {error ? (
         <section className="panel">
-          <p className="status-text error">Unable to load overview: {error}</p>
+          <p className="status-text error">Unable to load insights: {error}</p>
         </section>
       ) : null}
 
       {!loading && !error && !data ? (
         <section className="panel">
-          <p className="status-text">No overview data available.</p>
+          <p className="status-text">No insight data available.</p>
         </section>
       ) : null}
 
       {!loading && !error && data ? (
         <>
+          <section className="panel">
+            <h3>{suggestionsTitle}</h3>
+            {predictionSource === "custom_ml" ? (
+              <p className="panel-source-note">
+                AI-generated suggestions are based solely on Custom ML model outputs, not Open-Meteo.
+              </p>
+            ) : null}
+            <ul className="advice-list">
+              <li>
+                <strong>{formatTextTimes(clothingSuggestion, timeFormat)}</strong>
+              </li>
+              {data.top_recommendations.map((tip, index) => (
+                <li key={`${index}-${tip}`}>{formatTextTimes(tip, timeFormat)}</li>
+              ))}
+            </ul>
+          </section>
+
+          <details className="panel collapsible-panel">
+            <summary className="collapsible-trigger">Why These Recommendations</summary>
+            <ul className="advice-list">
+              {(data.recommendation_details ?? []).map((detail, index) => (
+                <li key={`${detail.source}-${index}`}>
+                  <strong>{formatTextTimes(detail.recommendation, timeFormat)}</strong>
+                  <br />
+                  <span className="panel-source-note">{formatTextTimes(detail.why, timeFormat)}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+
           <div className="metric-grid">
             <MetricCard
               label="Min Temp (24h)"
@@ -147,7 +195,7 @@ export function OverviewPage({ data, loading, error, predictionSource, timeForma
           ) : null}
 
           <section className="panel">
-            <h3>Visual Snapshot</h3>
+            <h3>Weather Snapshot</h3>
             <div className="overview-visual-grid">
               <article className="visual-card">
                 <p className="visual-card-title">Temperature Band (24h)</p>
@@ -183,33 +231,6 @@ export function OverviewPage({ data, loading, error, predictionSource, timeForma
                 tone={data.alert_level === "high" ? "danger" : data.alert_level === "medium" ? "warning" : "good"}
               />
             </div>
-          </section>
-
-          <section className="panel">
-            <h3>{suggestionsTitle}</h3>
-            {predictionSource === "custom_ml" ? (
-              <p className="panel-source-note">
-                AI-generated suggestions are based solely on Custom ML model outputs, not Open-Meteo.
-              </p>
-            ) : null}
-            <ul className="advice-list">
-              {data.top_recommendations.map((tip, index) => (
-                <li key={`${index}-${tip}`}>{formatTextTimes(tip, timeFormat)}</li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="panel">
-            <h3>Why These Recommendations</h3>
-            <ul className="advice-list">
-              {(data.recommendation_details ?? []).map((detail, index) => (
-                <li key={`${detail.source}-${index}`}>
-                  <strong>{detail.recommendation}</strong>
-                  <br />
-                  <span className="panel-source-note">{detail.why}</span>
-                </li>
-              ))}
-            </ul>
           </section>
 
           {weeklySummary ? (

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { CircularGauge } from "../components/CircularGauge";
 import { getPlan } from "../api/client";
 import type { PlanResponse } from "../types";
 import { formatHourLabel, formatTextTimes, type TimeFormat } from "../utils/time";
@@ -67,7 +68,7 @@ export function PlanPage({ location, timeFormat }: PlanPageProps) {
     <section className="dashboard-page">
       <header className="page-header split">
         <div>
-          <h2>Daily Plan Copilot</h2>
+          <h2>Daily Planner</h2>
         </div>
         <div className="date-picker date-picker-inline">
           <button type="button" className="date-picker-label-button" onClick={openDatePicker}>
@@ -94,11 +95,22 @@ export function PlanPage({ location, timeFormat }: PlanPageProps) {
               {data.windows.map((window) => (
                 <article key={window.category} className="window-card">
                   <p className="window-title">{window.category}</p>
-                  <p className="window-meta">
-                    {formatHourLabel(window.best_hour, timeFormat)} · {window.score.toFixed(0)}/100
-                  </p>
+                  <p className="window-meta">{formatHourLabel(window.best_hour, timeFormat)}</p>
                   <p className="window-summary">{formatTextTimes(window.summary, timeFormat)}</p>
                 </article>
+              ))}
+            </div>
+            <div className="risk-ring-grid">
+              {data.windows.map((window) => (
+                <CircularGauge
+                  key={`score-${window.category}`}
+                  label={`${window.category} score`}
+                  value={window.score}
+                  max={100}
+                  unit="%"
+                  caption={`Best around ${formatHourLabel(window.best_hour, timeFormat)}`}
+                  tone={window.score >= 75 ? "good" : window.score >= 50 ? "warning" : "danger"}
+                />
               ))}
             </div>
           </section>

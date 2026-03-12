@@ -39,8 +39,8 @@ def summarize_section(section: str, payload: dict) -> str:
 def _fallback_summary(section: str, payload: dict) -> str:
     if section == "overview":
         return (
-            "- Use plan and health dashboards before long outdoor blocks.\n"
-            "- Re-check anomalies for rapid weather shifts."
+            "- Start with clothing and hydration choices based on the next 24h conditions.\n"
+            "- Use the best activity windows to schedule longer outdoor blocks."
         )
     if section == "health":
         return (

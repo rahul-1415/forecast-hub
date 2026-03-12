@@ -13,6 +13,33 @@ CATEGORY_WEIGHTS = {
 }
 
 
+def score_tier(score: float | None) -> str:
+    if score is None:
+        return "balanced"
+    if score >= 85:
+        return "excellent"
+    if score >= 70:
+        return "strong"
+    if score >= 55:
+        return "moderate"
+    if score >= 40:
+        return "limited"
+    return "challenging"
+
+
+def build_plan_window_summary(category: str, best_hour: int, score: float | None) -> str:
+    tier = score_tier(score)
+    return f"Best {category} window is around {best_hour:02d}:00 with {tier} outdoor comfort."
+
+
+def build_plan_window_why(category: str, best_hour: int, score: float | None) -> str:
+    tier = score_tier(score)
+    return (
+        f"{category.title()} conditions near {best_hour:02d}:00 are {tier}, based on temperature, "
+        "precipitation, wind, and comfort weighting."
+    )
+
+
 def _temperature_score(temp: float | None, low: float, high: float) -> float:
     if temp is None:
         return 0.5
@@ -134,10 +161,7 @@ def generate_plan_windows(db: Session, location_id: int, target_date: date) -> l
             reverse=True,
         )
         best_hour, best_score = scored[0]
-        summary = (
-            f"Best {category} window is around {best_hour.timestamp.hour:02d}:00 "
-            f"with comfort score {best_score:.0f}/100."
-        )
+        summary = build_plan_window_summary(category, best_hour.timestamp.hour, best_score)
         row = _upsert_plan_window(
             db,
             location_id=location_id,
